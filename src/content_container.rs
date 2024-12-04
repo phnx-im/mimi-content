@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use serde::{ser::SerializeSeq as _, Deserialize, Serialize};
+use serde::{ser::SerializeSeq as _, Serialize};
 use serde_bytes::ByteBuf;
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 use std::collections::HashMap;
