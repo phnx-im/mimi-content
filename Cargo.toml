@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2024 Phoenix R&D GmbH <hello@phnx.im>
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "mimi-content"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ciborium = "0.2.2"
+hex = "0.4.3"
+serde = { version = "1.0.215", features = ["derive"] }
+serde_bytes = "0.11.15"
+serde_tuple = "1.1.0"
