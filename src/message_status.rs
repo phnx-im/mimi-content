@@ -2,40 +2,73 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use serde::{ser::SerializeSeq as _, Serialize};
+use serde::{
+    de::{self},
+    Deserialize, Serialize,
+};
 use serde_bytes::ByteBuf;
-use serde_tuple::Serialize_tuple;
+use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 
-#[derive(Debug, Clone)]
+#[derive(Serialize_tuple, Deserialize_tuple, Debug, Clone, PartialEq, Eq)]
 pub struct MessageStatusReport {
-    timestamp: u64,
+    timestamp: Timestamp,
     statuses: Vec<PerMessageStatus>,
 }
 
-impl Serialize for MessageStatusReport {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Timestamp(u64);
+
+impl Serialize for Timestamp {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let mut state = serializer.serialize_seq(Some(2))?;
-        state.serialize_element(&ciborium::Value::Tag(
+        ciborium::Value::Tag(
             62,
             Box::new(ciborium::Value::Integer(ciborium::value::Integer::from(
-                self.timestamp,
+                self.0,
             ))),
-        ))?;
-        state.serialize_element(&self.statuses)?;
-        state.end()
+        )
+        .serialize(serializer)
     }
 }
 
-#[derive(Serialize_tuple, Debug, Clone)]
+impl<'de> Deserialize<'de> for Timestamp {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = ciborium::Value::deserialize(deserializer)?;
+        if let ciborium::Value::Tag(62, v) = value {
+            if let ciborium::Value::Integer(timestamp) = *v {
+                Ok(Timestamp(u64::try_from(timestamp).map_err(|_| {
+                    de::Error::invalid_value(
+                        de::Unexpected::Other(&i128::from(timestamp).to_string()),
+                        &"timestamp must fit in u64",
+                    )
+                })?))
+            } else {
+                Err(de::Error::invalid_type(
+                    de::Unexpected::StructVariant,
+                    &"Timestamp must be an integer",
+                ))
+            }
+        } else {
+            Err(de::Error::invalid_type(
+                de::Unexpected::StructVariant,
+                &"Timestamp must have tag 62",
+            ))
+        }
+    }
+}
+
+#[derive(Serialize_tuple, Deserialize_tuple, Debug, Clone, PartialEq, Eq)]
 pub struct PerMessageStatus {
     message_id: ByteBuf,
     status: MessageStatus,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageStatus {
     Unread,
     Delivered,
@@ -66,14 +99,37 @@ impl Serialize for MessageStatus {
     }
 }
 
+impl<'de> Deserialize<'de> for MessageStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        let u8 = u8::deserialize(deserializer)?;
+        let disposition = match u8 {
+            0 => MessageStatus::Unread,
+            1 => MessageStatus::Delivered,
+            2 => MessageStatus::Read,
+            3 => MessageStatus::Expired,
+            4 => MessageStatus::Deleted,
+            5 => MessageStatus::Hidden,
+            6 => MessageStatus::Error,
+            u => MessageStatus::Custom(u),
+        };
+
+        Ok(disposition)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::*;
 
     #[test]
-    fn original_message() {
+    fn statuses() {
         let value = MessageStatusReport {
-            timestamp: 1644284703227,
+            timestamp: Timestamp(1644284703227),
             statuses: vec![
                 PerMessageStatus {
                     message_id: hex::decode(
@@ -112,6 +168,10 @@ mod tests {
 
         let mut result = Vec::new();
         ciborium::ser::into_writer(&value, &mut result).unwrap();
+
+        // Test deserialization
+        let value2 = ciborium::de::from_reader(Cursor::new(result.clone())).unwrap();
+        assert_eq!(value, value2);
 
         // Taken from MIMI content format draft
         let target = hex::decode("82d83e1b0000017ed70171fb84825820d3c14744d1791d02548232c23d35efa97668174ba385af066011e43bd7e5150102825820e701beee59f9376282f39092e1041b2ac2e3aad1776570c1a28de244979c71ed028258206b50bfdd71edc83554ae21380080f4a3ba77985da34528a515fac3c38e4998b8008258205c95a4dfddab84348bcc265a479299fbd3a2eecfa3d490985da5113e5480c7f103").unwrap();
