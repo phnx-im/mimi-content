@@ -11,6 +11,8 @@ use serde_bytes::ByteBuf;
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 use std::collections::HashMap;
 
+use crate::serde_enum_as_u8;
+
 #[derive(Serialize_tuple, Deserialize_tuple, PartialEq, Eq, Debug, Clone)]
 pub struct MimiContent {
     replaces: Option<ByteBuf>,
@@ -256,63 +258,22 @@ impl<'de> Deserialize<'de> for NestedPart {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[repr(u8)]
 pub enum Disposition {
-    Unspecified,
-    Render,
-    Reaction,
-    Profile,
-    Inline,
-    Icon,
-    Attachment,
-    Session,
-    Preview,
+    Unspecified = 0,
+    Render = 1,
+    Reaction = 2,
+    Profile = 3,
+    Inline = 4,
+    Icon = 5,
+    Attachment = 6,
+    Session = 7,
+    Preview = 8,
     Custom(u8),
 }
 
-impl Serialize for Disposition {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Disposition::Unspecified => 0,
-            Disposition::Render => 1,
-            Disposition::Reaction => 2,
-            Disposition::Profile => 3,
-            Disposition::Inline => 4,
-            Disposition::Icon => 5,
-            Disposition::Attachment => 6,
-            Disposition::Session => 7,
-            Disposition::Preview => 8,
-            Disposition::Custom(u) => *u,
-        }
-        .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Disposition {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: de::Deserializer<'de>,
-    {
-        let u8 = u8::deserialize(deserializer)?;
-        let disposition = match u8 {
-            0 => Disposition::Unspecified,
-            1 => Disposition::Render,
-            2 => Disposition::Reaction,
-            3 => Disposition::Profile,
-            4 => Disposition::Inline,
-            5 => Disposition::Icon,
-            6 => Disposition::Attachment,
-            7 => Disposition::Session,
-            8 => Disposition::Preview,
-            u => Disposition::Custom(u),
-        };
-
-        Ok(disposition)
-    }
-}
+serde_enum_as_u8!(Disposition);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NestedPartContent {
@@ -345,46 +306,16 @@ pub struct AeadInfo {
     aad: ByteBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum PartSemantics {
-    ChooseOne,
-    SingleUnit,
-    ProcessAll,
+    ChooseOne = 0,
+    SingleUnit = 1,
+    ProcessAll = 2,
+    Custom(u8),
 }
 
-impl Serialize for PartSemantics {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            PartSemantics::ChooseOne => 0_u8,
-            PartSemantics::SingleUnit => 1,
-            PartSemantics::ProcessAll => 2,
-        }
-        .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for PartSemantics {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: de::Deserializer<'de>,
-    {
-        let u8 = u8::deserialize(deserializer)?;
-        Ok(match u8 {
-            0 => PartSemantics::ChooseOne,
-            1 => PartSemantics::SingleUnit,
-            2 => PartSemantics::ProcessAll,
-            u => {
-                return Err(de::Error::invalid_value(
-                    Unexpected::Unsigned(u64::from(u)),
-                    &"0, 1 or 2",
-                ))
-            }
-        })
-    }
-}
+serde_enum_as_u8!(PartSemantics);
 
 #[cfg(test)]
 mod tests {

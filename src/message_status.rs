@@ -9,6 +9,8 @@ use serde::{
 use serde_bytes::ByteBuf;
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 
+use crate::serde_enum_as_u8;
+
 #[derive(Serialize_tuple, Deserialize_tuple, Debug, Clone, PartialEq, Eq)]
 pub struct MessageStatusReport {
     timestamp: Timestamp,
@@ -68,57 +70,20 @@ pub struct PerMessageStatus {
     status: MessageStatus,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum MessageStatus {
-    Unread,
-    Delivered,
-    Read,
-    Expired,
-    Deleted,
-    Hidden,
-    Error,
+    Unread = 0,
+    Delivered = 1,
+    Read = 2,
+    Expired = 3,
+    Deleted = 4,
+    Hidden = 5,
+    Error = 6,
     Custom(u8),
 }
 
-impl Serialize for MessageStatus {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            MessageStatus::Unread => 0,
-            MessageStatus::Delivered => 1,
-            MessageStatus::Read => 2,
-            MessageStatus::Expired => 3,
-            MessageStatus::Deleted => 4,
-            MessageStatus::Hidden => 5,
-            MessageStatus::Error => 6,
-            MessageStatus::Custom(u) => *u,
-        }
-        .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for MessageStatus {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: de::Deserializer<'de>,
-    {
-        let u8 = u8::deserialize(deserializer)?;
-        let disposition = match u8 {
-            0 => MessageStatus::Unread,
-            1 => MessageStatus::Delivered,
-            2 => MessageStatus::Read,
-            3 => MessageStatus::Expired,
-            4 => MessageStatus::Deleted,
-            5 => MessageStatus::Hidden,
-            6 => MessageStatus::Error,
-            u => MessageStatus::Custom(u),
-        };
-
-        Ok(disposition)
-    }
-}
+serde_enum_as_u8!(MessageStatus);
 
 #[cfg(test)]
 mod tests {
