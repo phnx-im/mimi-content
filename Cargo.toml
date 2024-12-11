@@ -12,4 +12,5 @@ ciborium = "0.2.2"
 hex = "0.4.3"
 serde = { version = "1.0.215", features = ["derive"] }
 serde_bytes = "0.11.15"
+serde_list = { path = "./serde_list" }
 serde_tuple = "1.1.0"

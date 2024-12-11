@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2024 Phoenix R&D GmbH <hello@phnx.im>
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "serde_list"
+version = "1.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0.216", features = ["derive"] }
+serde_list_macros = { version = "0.1.0", path = "serde_list_macros" }
