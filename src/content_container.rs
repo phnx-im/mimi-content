@@ -8,7 +8,7 @@ use serde::{
     Deserialize, Serialize,
 };
 use serde_bytes::ByteBuf;
-use serde_list::{ExternallyTagged, Serialize_custom_u8, Serialize_list};
+use serde_list::{ExternallyTagged, Serde_custom_u8, Serde_list};
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 use std::collections::HashMap;
 
@@ -31,7 +31,7 @@ pub struct InReplyTo {
     hash: ByteBuf,
 }
 
-#[derive(Serialize_list, Debug, Clone, PartialEq, Eq)]
+#[derive(Serde_list, Debug, Clone, PartialEq, Eq)]
 pub struct NestedPart {
     disposition: Disposition,
     language: String, // TODO: Parse as Vec<LanguageTag> ?
@@ -40,126 +40,7 @@ pub struct NestedPart {
     part: NestedPartContent,
 }
 
-impl<'de> Deserialize<'de> for NestedPart {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct NestedPartVisitor;
-        impl<'de> Visitor<'de> for NestedPartVisitor {
-            type Value = NestedPart;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("struct NestedPart")
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-            {
-                // Keep track of current array index for better error messages
-                let mut current_i = 0;
-                let mut i = || {
-                    let old = current_i;
-                    current_i += 1;
-                    old
-                };
-
-                let disposition = seq
-                    .next_element::<Disposition>()?
-                    .ok_or_else(|| de::Error::invalid_length(i(), &self))?;
-
-                let language = seq
-                    .next_element::<String>()?
-                    .ok_or_else(|| de::Error::invalid_length(i(), &self))?;
-
-                let part_index = seq
-                    .next_element::<u16>()?
-                    .ok_or_else(|| de::Error::invalid_length(i(), &self))?;
-
-                let cardinality: u8 = seq
-                    .next_element()?
-                    .ok_or_else(|| de::Error::invalid_length(i(), &self))?;
-
-                let part = match cardinality {
-                    0 => NestedPartContent::NullPart,
-                    1 => NestedPartContent::SinglePart {
-                        content_type: seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                        content: seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                    },
-                    2 => NestedPartContent::ExternalPart {
-                        content_type: seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                        url: seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                        expires: seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                        size: seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                        enc_alg: seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                        key: seq
-                            .next_element::<ByteBuf>()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                        nonce: seq
-                            .next_element::<ByteBuf>()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                        aad: seq
-                            .next_element::<ByteBuf>()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                        hash_alg: seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                        content_hash: seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                        description: seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                    },
-                    3 => NestedPartContent::MultiPart {
-                        part_semantics: seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                        parts: seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(i(), &self))?,
-                    },
-                    u => {
-                        return Err(de::Error::invalid_value(
-                            Unexpected::Unsigned(u64::from(u)),
-                            &"0, 1, 2 or 3",
-                        ))
-                    }
-                };
-
-                assert!(
-                    seq.next_element::<u8>()?.is_none(),
-                    "parsing finished with data remaining"
-                );
-
-                Ok(NestedPart {
-                    disposition,
-                    language,
-                    part_index,
-                    part,
-                })
-            }
-        }
-        deserializer.deserialize_seq(NestedPartVisitor)
-    }
-}
-
-#[derive(Serialize_custom_u8, Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Serde_custom_u8, Debug, Clone, Copy, Eq, PartialEq)]
 #[repr(u8)]
 pub enum Disposition {
     Unspecified = 0,
@@ -238,7 +119,7 @@ pub enum NestedPartContent {
     } = 3,
 }
 
-#[derive(Serialize_custom_u8, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serde_custom_u8, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PartSemantics {
     ChooseOne = 0,
