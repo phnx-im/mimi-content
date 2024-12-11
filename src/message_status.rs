@@ -7,9 +7,8 @@ use serde::{
     Deserialize, Serialize,
 };
 use serde_bytes::ByteBuf;
+use serde_list::Serialize_custom_u8;
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
-
-use crate::serde_enum_as_u8;
 
 #[derive(Serialize_tuple, Deserialize_tuple, Debug, Clone, PartialEq, Eq)]
 pub struct MessageStatusReport {
@@ -70,7 +69,7 @@ pub struct PerMessageStatus {
     status: MessageStatus,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize_custom_u8, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MessageStatus {
     Unread = 0,
@@ -82,8 +81,6 @@ pub enum MessageStatus {
     Error = 6,
     Custom(u8),
 }
-
-serde_enum_as_u8!(MessageStatus);
 
 #[cfg(test)]
 mod tests {
