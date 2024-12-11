@@ -7,7 +7,7 @@ use serde::{
     Deserialize, Serialize,
 };
 use serde_bytes::ByteBuf;
-use serde_list::Serialize_custom_u8;
+use serde_list::Serde_custom_u8;
 use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 
 #[derive(Serialize_tuple, Deserialize_tuple, Debug, Clone, PartialEq, Eq)]
@@ -69,7 +69,7 @@ pub struct PerMessageStatus {
     status: MessageStatus,
 }
 
-#[derive(Serialize_custom_u8, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serde_custom_u8, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MessageStatus {
     Unread = 0,

@@ -11,71 +11,98 @@ use punctuated::Punctuated;
 use quote::quote;
 use syn::*;
 
+/// Serialize an enum as a list of the discriminator followed by all fields.
 #[proc_macro_derive(ExternallyTagged)]
 pub fn derive_externally_tagged(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let enum_name = ast.ident;
 
     let Data::Enum(data) = ast.data else {
-        panic!();
+        panic!("Only enums can be externally tagged");
     };
 
-    let mut valid = false;
-    for attr in &ast.attrs {
-        if attr.path().is_ident("repr") {
-            if attr.parse_args::<Ident>().unwrap() == "u8" {
-                valid = true;
-            }
-        }
-    }
-    if !valid {
-        panic!("ExternallyTagged requires #[repr(u8)]")
-    }
-
+    // Example:
+    // Self::Variant2 { .. } => 2,
     let mut field_num_impls = Vec::new();
-    let mut field_serialize_impls = Vec::new();
+
+    // Example:
+    // Self::Variant2 { field1, field2 } => {
+    //     state.serialize_element(&2);
+    //     state.serialize_element(field1);
+    //     state.serialize_element(field2);
+    // },
+    let mut variant_serialize_impls = Vec::new();
+
+    // Example:
+    // 2 => Self::Variant2 {
+    //     field1: seq.next_element()?
+    //         .ok_or_else(|| de::Error::invalid_length(next_index(), &"enum EnumName"))?,
+    //     field2: seq.next_element()?
+    //         .ok_or_else(|| de::Error::invalid_length(next_index(), &"enum EnumName"))?,
+    // }
+    let mut variant_deserialize_impls = Vec::new();
 
     for variant in data.variants {
         let variant_name = variant.ident;
 
         let fields = match variant.fields {
             Fields::Named(fields_named) => fields_named.named,
-            Fields::Unnamed(_fields_unnamed) => panic!(),
-            Fields::Unit => Punctuated::new(),
+            Fields::Unnamed(_fields_unnamed) => panic!("All fields must be named"),
+            Fields::Unit => Punctuated::new(), // Handle no fields like empty list of named fields
         };
 
-        let mut names = Vec::new();
-        let mut serialized = Vec::new();
+        // Each enum variant must have an explicit discriminator,
+        // like "Variant { field: type } = discriminator"
+        let Expr::Lit(ExprLit {
+            lit: Lit::Int(variant_discriminant),
+            ..
+        }) = variant
+            .discriminant
+            .expect("All enum variants must have an explicit discriminant value")
+            .1
+        else {
+            panic!("Discriminant values must be integers")
+        };
+
+        // TODO: Handle u16 and other types by parsing #[repr(inttype)]
+        let variant_discriminant = variant_discriminant
+            .base10_parse::<u8>()
+            .expect("Discriminant must be a valid u8");
+
+        let mut field_names = Vec::new();
+        let mut field_serialize_impls = Vec::new();
+        let mut field_deserialize_impls = Vec::new();
+
+        field_serialize_impls.push(quote! { state.serialize_element(&#variant_discriminant)?; });
 
         for field in &fields {
-            let Some(field_name) = &field.ident else {
-                panic!();
-            };
+            let field_name = field.ident.as_ref().expect("All fields are named");
 
-            names.push(field_name);
-            serialized.push(quote! { state.serialize_element(#field_name)?; });
+            field_names.push(field_name);
+            field_serialize_impls.push(quote! { state.serialize_element(#field_name)?; });
+            field_deserialize_impls.push(quote! {
+                #field_name: seq.next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(next_index(), &"enum #enum_name"))?,
+            });
         }
 
-        let num = names.len();
+        let num = field_names.len();
 
         field_num_impls.push(quote! {
-            Self::#variant_name { .. } => { #num },
+            Self::#variant_name { .. } => #num,
         });
 
-        field_serialize_impls.push(quote! {
-            Self::#variant_name { #(#names),* } => { #(#serialized)* },
+        variant_serialize_impls.push(quote! {
+            Self::#variant_name { #(#field_names),* } => { #(#field_serialize_impls)* },
+        });
+
+        variant_deserialize_impls.push(quote! {
+            #variant_discriminant => Self::#variant_name { #(#field_deserialize_impls)* },
         });
     }
 
     quote! {
         impl ExternallyTagged for #enum_name {
-            // https://doc.rust-lang.org/reference/items/enumerations.html?search=#pointer-casting
-            fn discriminant(&self) -> u8 {
-                // This is safe if the enum has repr(u8)
-                let pointer = self as *const Self as *const u8;
-                unsafe { *pointer }
-            }
-
             fn num_fields(&self) -> usize {
                 match self {
                     #(#field_num_impls)*
@@ -84,7 +111,22 @@ pub fn derive_externally_tagged(input: TokenStream) -> TokenStream {
 
             fn serialize_fields<S: serde::ser::SerializeSeq>(&self, state: &mut S) -> Result<(), S::Error> {
                 Ok(match self {
-                    #(#field_serialize_impls)*
+                    #(#variant_serialize_impls)*
+                })
+            }
+
+            fn deserialize_fields<'a, S: serde::de::SeqAccess<'a>>(seq: &mut S, next_index: &mut impl FnMut() -> usize) -> Result<Self, S::Error> {
+                let target_discriminant = seq.next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(next_index(), &"enum #enum_name"))?;
+
+                Ok(match target_discriminant {
+                    #(#variant_deserialize_impls)*
+                    u => {
+                        return Err(de::Error::invalid_value(
+                            Unexpected::Unsigned(u64::from(u)),
+                            &"A valid discriminant for enum #enum_name",
+                        ))
+                    }
                 })
             }
         }
@@ -92,8 +134,8 @@ pub fn derive_externally_tagged(input: TokenStream) -> TokenStream {
     .into()
 }
 
-#[proc_macro_derive(Serialize_custom_u8)]
-pub fn derive_serialize_custom_u8(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(Serde_custom_u8)]
+pub fn derive_serde_custom_u8(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let enum_name = ast.ident;
 
@@ -101,63 +143,79 @@ pub fn derive_serialize_custom_u8(input: TokenStream) -> TokenStream {
         panic!();
     };
 
-    let mut valid = false;
-    for attr in &ast.attrs {
-        if attr.path().is_ident("repr") {
-            if attr.parse_args::<Ident>().unwrap() == "u8" {
-                valid = true;
-            }
-        }
-    }
-    if !valid {
-        panic!("Serialize_custom_u8 requires #[repr(u8)]")
-    }
+    // Example:
+    // Self::Variant2 => 2,
+    // Self::Custom(u) => u,
+    let mut variant_serializations = Vec::new();
 
-    let mut must_be_last = false;
+    // Example:
+    // 2 => Self::Variant2,
+    // u => Self::Custom(u),
+    let mut variant_deserializations = Vec::new();
+
+    let mut found_custom_field = false;
     for variant in data.variants {
-        if must_be_last {
+        if found_custom_field {
             panic!("There should be no more variants after Custom(u8)");
         }
 
         let variant_name = variant.ident;
 
         match variant.fields {
-            Fields::Named(_fields_named) => {
-                panic!("Enum cannot contain fields except for Custom(u8)")
+            Fields::Unit => {
+                let Expr::Lit(ExprLit {
+                    lit: Lit::Int(discriminant),
+                    ..
+                }) = variant
+                    .discriminant
+                    .expect("All normal enum variants must have an explicit discriminant value")
+                    .1
+                else {
+                    panic!("Discriminant values must be integers")
+                };
+
+                let discriminant = discriminant
+                    .base10_parse::<u8>()
+                    .expect("Discriminant must be a valid u8");
+
+                variant_serializations.push(quote! {
+                    Self::#variant_name => #discriminant,
+                });
+                variant_deserializations.push(quote! {
+                    #discriminant => Self::#variant_name,
+                });
             }
             Fields::Unnamed(_fields_unnamed) => {
                 if variant_name == "Custom" {
-                    must_be_last = true;
+                    variant_serializations.push(quote! {
+                        Self::Custom(u) => *u,
+                    });
+                    variant_deserializations.push(quote! {
+                        u => Self::Custom(u),
+                    });
+                    found_custom_field = true;
                 } else {
                     panic!("Enum cannot contain fields except for Custom(u8)");
                 }
             }
-            Fields::Unit => {}
+            Fields::Named(_fields_named) => {
+                panic!("Enum cannot contain fields except for Custom(u8)")
+            }
         };
     }
 
-    if !must_be_last {
+    if !found_custom_field {
         panic!("The last variant must be Custom(u8)");
     }
 
     quote! {
-        // https://doc.rust-lang.org/reference/items/enumerations.html?search=#pointer-casting
-        impl #enum_name {
-            fn discriminant(&self) -> u8 {
-                // This is safe if the enum has repr(u8)
-                let pointer = self as *const Self as *const u8;
-                unsafe { *pointer }
-            }
-        }
-
         impl Serialize for #enum_name {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
                 S: serde::Serializer,
             {
                 match self {
-                    Self::Custom(custom) => *custom,
-                    known => known.discriminant(),
+                    #(#variant_serializations)*
                 }
                 .serialize(serializer)
             }
@@ -170,31 +228,42 @@ pub fn derive_serialize_custom_u8(input: TokenStream) -> TokenStream {
             {
                 let value = u8::deserialize(deserializer)?;
 
-                // This assumes that Custom is the last variant of the enum
-                let variant = if value < Self::Custom(0).discriminant() {
-                    // The value corresponds to the discriminant of the enum
-                    let result = unsafe { *(&value as *const u8 as *const Self) };
-                    assert_eq!(result.discriminant(), value);
-
-                    result
-                } else {
-                    Self::Custom(value)
-                };
-
-                Ok(variant)
+                Ok(match value {
+                    #(#variant_deserializations)*
+                })
             }
         }
     }
     .into()
 }
 
-#[proc_macro_derive(Serialize_list, attributes(externally_tagged))]
-pub fn derive_serialize_list(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(Serde_list, attributes(externally_tagged))]
+pub fn derive_serde_list(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let struct_name = ast.ident;
 
+    // Example:
+    // num_fields += 1;
+    // num_fields += 1;
+    // num_fields += ExternallyTagged::num_fields(&self.external);
     let mut field_num_updates = Vec::new();
+
+    // Example:
+    // state.serialize_element(&self.field1)?;
+    // state.serialize_element(&self.field2)?;
+    // ExternallyTagged::serialize_fields(&self.external, &mut state)?;
     let mut field_serializations = Vec::new();
+
+    // Example:
+    // field1: seq
+    //     .next_element()?
+    //     .ok_or_else(|| de::Error::invalid_length(next_index(), &self))?,
+    // field2: seq
+    //     .next_element()?
+    //     .ok_or_else(|| de::Error::invalid_length(next_index(), &self))?,
+    // external: ExternallyTagged::deserialize_fields(&mut seq, &mut next_index)?,
+    //
+    let mut field_deserializations = Vec::new();
 
     let Data::Struct(data) = ast.data else {
         panic!();
@@ -212,23 +281,36 @@ pub fn derive_serialize_list(input: TokenStream) -> TokenStream {
         for attr in &field.attrs {
             if attr.path().is_ident("externally_tagged") {
                 field_num_updates.push(quote! {
-                    num_fields += ExternallyTagged::num_fields(&self.#field_name);
+                    // discriminator + fields
+                    num_fields += 1 + ExternallyTagged::num_fields(&self.#field_name);
                 });
 
                 field_serializations.push(quote! {
-                    state.serialize_element(&ExternallyTagged::discriminant(&self.#field_name))?;
                     ExternallyTagged::serialize_fields(&self.#field_name, &mut state)?;
-
                 });
+
+                field_deserializations.push(quote! {
+                    #field_name: ExternallyTagged::deserialize_fields(&mut seq, &mut next_index)?,
+                });
+
                 continue 'fields;
             }
         }
+
+        field_num_updates.push(quote! {
+            num_fields += 1;
+        });
+
         field_serializations.push(quote! {
             state.serialize_element(&self.#field_name)?;
         });
-    }
 
-    let num_fields = field_serializations.len();
+        field_deserializations.push(quote! {
+            #field_name: seq
+                .next_element()?
+                .ok_or_else(|| de::Error::invalid_length(next_index(), &self))?,
+        });
+    }
 
     quote! {
         impl serde::Serialize for #struct_name {
@@ -236,7 +318,8 @@ pub fn derive_serialize_list(input: TokenStream) -> TokenStream {
             where
                 S: serde::Serializer,
             {
-                let mut num_fields = #num_fields;
+                let mut num_fields = 0;
+
                 #(#field_num_updates)*
 
                 let mut state = serializer.serialize_seq(Some(num_fields))?;
@@ -246,6 +329,48 @@ pub fn derive_serialize_list(input: TokenStream) -> TokenStream {
                 state.end()
             }
         }
+
+        impl<'de> Deserialize<'de> for #struct_name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct NestedPartVisitor;
+                impl<'de> Visitor<'de> for NestedPartVisitor {
+                    type Value = NestedPart;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        formatter.write_str("struct #struct_name")
+                    }
+
+                    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+                    where
+                        A: serde::de::SeqAccess<'de>,
+                    {
+                        // Keep track of current array index for better error messages
+                        let mut current_index = 0;
+                        let mut next_index = || {
+                            let old = current_index;
+                            current_index += 1;
+                            old
+                        };
+
+                        let result = NestedPart {
+                            #(#field_deserializations)*
+                        };
+
+                        assert!(
+                            seq.next_element::<u8>()?.is_none(),
+                            "parsing finished with data remaining"
+                        );
+
+                        Ok(result)
+                    }
+                }
+                deserializer.deserialize_seq(NestedPartVisitor)
+            }
+        }
+
     }
     .into()
 }
