@@ -326,6 +326,7 @@ pub fn derive_serde_list(input: TokenStream) -> TokenStream {
 
                 #(#field_serializations)*
 
+                use serde::ser::SerializeSeq;
                 state.end()
             }
         }
@@ -335,9 +336,9 @@ pub fn derive_serde_list(input: TokenStream) -> TokenStream {
             where
                 D: serde::Deserializer<'de>,
             {
-                struct NestedPartVisitor;
-                impl<'de> Visitor<'de> for NestedPartVisitor {
-                    type Value = NestedPart;
+                struct InnerVisitor;
+                impl<'de> serde::de::Visitor<'de> for InnerVisitor {
+                    type Value = #struct_name;
 
                     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                         formatter.write_str("struct #struct_name")
@@ -355,7 +356,7 @@ pub fn derive_serde_list(input: TokenStream) -> TokenStream {
                             old
                         };
 
-                        let result = NestedPart {
+                        let result = #struct_name {
                             #(#field_deserializations)*
                         };
 
@@ -367,7 +368,7 @@ pub fn derive_serde_list(input: TokenStream) -> TokenStream {
                         Ok(result)
                     }
                 }
-                deserializer.deserialize_seq(NestedPartVisitor)
+                deserializer.deserialize_seq(InnerVisitor)
             }
         }
 
