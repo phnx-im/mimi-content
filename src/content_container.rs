@@ -3,16 +3,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use serde::{
-    de::{self, Unexpected, Visitor},
-    ser::SerializeSeq as _,
+    de::{self, Unexpected},
     Deserialize, Serialize,
 };
 use serde_bytes::ByteBuf;
 use serde_list::{ExternallyTagged, Serde_custom_u8, Serde_list};
-use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 use std::collections::HashMap;
 
-#[derive(Serialize_tuple, Deserialize_tuple, PartialEq, Eq, Debug, Clone)]
+#[derive(Serde_list, PartialEq, Eq, Debug, Clone)]
 pub struct MimiContent {
     replaces: Option<ByteBuf>,
     topic_id: ByteBuf, // TODO: camelCase
@@ -24,7 +22,7 @@ pub struct MimiContent {
     // TODO: Wrapper struct for MessageDerivedValues, like messageId, roomUrl, hubAcceptedTimestamp?
 }
 
-#[derive(Serialize_tuple, Deserialize_tuple, PartialEq, Eq, Debug, Clone)]
+#[derive(Serde_list, PartialEq, Eq, Debug, Clone)]
 pub struct InReplyTo {
     message: ByteBuf,
     hash_alg: u32, // TODO: enum

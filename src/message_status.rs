@@ -7,10 +7,9 @@ use serde::{
     Deserialize, Serialize,
 };
 use serde_bytes::ByteBuf;
-use serde_list::Serde_custom_u8;
-use serde_tuple::{Deserialize_tuple, Serialize_tuple};
+use serde_list::{Serde_custom_u8, Serde_list};
 
-#[derive(Serialize_tuple, Deserialize_tuple, Debug, Clone, PartialEq, Eq)]
+#[derive(Serde_list, Debug, Clone, PartialEq, Eq)]
 pub struct MessageStatusReport {
     timestamp: Timestamp,
     statuses: Vec<PerMessageStatus>,
@@ -63,7 +62,7 @@ impl<'de> Deserialize<'de> for Timestamp {
     }
 }
 
-#[derive(Serialize_tuple, Deserialize_tuple, Debug, Clone, PartialEq, Eq)]
+#[derive(Serde_list, Debug, Clone, PartialEq, Eq)]
 pub struct PerMessageStatus {
     message_id: ByteBuf,
     status: MessageStatus,
