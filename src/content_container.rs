@@ -13,7 +13,7 @@ use std::collections::HashMap;
 #[derive(Serde_list, PartialEq, Eq, Debug, Clone)]
 pub struct MimiContent {
     replaces: Option<ByteBuf>,
-    topic_id: ByteBuf, // TODO: camelCase
+    topic_id: ByteBuf,
     expires: u32,
     in_reply_to: Option<InReplyTo>,
     last_seen: Vec<ByteBuf>,
@@ -25,7 +25,7 @@ pub struct MimiContent {
 #[derive(Serde_list, PartialEq, Eq, Debug, Clone)]
 pub struct InReplyTo {
     message: ByteBuf,
-    hash_alg: u32, // TODO: enum
+    hash_alg: u8, // TODO: Enum
     hash: ByteBuf,
 }
 
@@ -110,6 +110,7 @@ pub enum NestedPartContent {
         hash_alg: u8,
         content_hash: ByteBuf,
         description: String,
+        filename: String,
     } = 2,
     MultiPart {
         part_semantics: PartSemantics,
@@ -427,7 +428,7 @@ mod tests {
                 part_index: 0,
                 part: NestedPartContent::ExternalPart {
                     content_type: "video/mp4".to_owned(),
-                    url: Url("https:example.combigfile.mp4".to_owned()), // TODO: Why is this formatted like this?
+                    url: Url("https://example.com/storage/8ksB4bSrrRE.mp4".to_owned()),
                     expires: 0,
                     size: 708234961,
                     enc_alg: 1,
@@ -443,6 +444,7 @@ mod tests {
                     .unwrap()
                     .into(),
                     description: "2 hours of key signing video".to_owned(),
+                    filename: "bigfile.mp4".to_owned(),
                 },
             },
         };
@@ -455,7 +457,7 @@ mod tests {
         // assert_eq!(value, value2);
 
         // Taken from MIMI content format draft
-        let target = hex::decode("87f64000f68158205c95a4dfddab84348bcc265a479299fbd3a2eecfa3d490985da5113e5480c7f1a08f0662656e000269766964656f2f6d7034d820781c68747470733a6578616d706c652e636f6d62696766696c652e6d7034001a2a36ced1015021399320958a6f4c745dde670d95e0d84cc86cf2c33f21527d1dd76f5b400158209ab17a8cf0890baaae7ee016c7312fcc080ba46498389458ee44f0276e783163781c3220686f757273206f66206b6579207369676e696e6720766964656f").unwrap();
+        let target = hex::decode("87f64000f68158205c95a4dfddab84348bcc265a479299fbd3a2eecfa3d490985da5113e5480c7f1a0900662656e000269766964656f2f6d7034d820782b68747470733a2f2f6578616d706c652e636f6d2f73746f726167652f386b7342346253727252452e6d7034001a2a36ced1015021399320958a6f4c745dde670d95e0d84cc86cf2c33f21527d1dd76f5b400158209ab17a8cf0890baaae7ee016c7312fcc080ba46498389458ee44f0276e783163781c3220686f757273206f66206b6579207369676e696e6720766964656f6b62696766696c652e6d7034").unwrap();
         dbg!(hex::encode(&result));
         dbg!(hex::encode(&target));
 
@@ -481,7 +483,7 @@ mod tests {
                 part_index: 0,
                 part: NestedPartContent::ExternalPart {
                     content_type: "".to_owned(),
-                    url: Url("https:example.com12345".to_owned()), // TODO: Why is this formatted like this?
+                    url: Url("https://example.com/join/12345".to_owned()),
                     expires: 0,
                     size: 0,
                     enc_alg: 0,
@@ -491,6 +493,7 @@ mod tests {
                     hash_alg: 0,
                     content_hash: ByteBuf::from(b""),
                     description: "Join the Foo 118 conference".to_owned(),
+                    filename: "".to_owned(),
                 },
             },
         };
@@ -503,7 +506,7 @@ mod tests {
         assert_eq!(value, value2);
 
         // Taken from MIMI content format draft
-        let target = hex::decode("87f647466f6f2031313800f6815820b267614d43e7676d28ef5b15e8676f23679fe365c78849d83e2ba0ae8196ec4ea08f0760000260d8207668747470733a6578616d706c652e636f6d31323334350000004040400040781b4a6f696e2074686520466f6f2031313820636f6e666572656e6365").unwrap();
+        let target = hex::decode("87f647466f6f2031313800f6815820b267614d43e7676d28ef5b15e8676f23679fe365c78849d83e2ba0ae8196ec4ea0900760000260d820781e68747470733a2f2f6578616d706c652e636f6d2f6a6f696e2f31323334350000004040400040781b4a6f696e2074686520466f6f2031313820636f6e666572656e636560").unwrap();
 
         assert_eq!(result, target);
     }
