@@ -453,8 +453,8 @@ mod tests {
         ciborium::ser::into_writer(&value, &mut result).unwrap();
 
         // Test deserialization
-        // let value2 = ciborium::de::from_reader(Cursor::new(result.clone())).unwrap();
-        // assert_eq!(value, value2);
+        let value2 = ciborium::de::from_reader(Cursor::new(result.clone())).unwrap();
+        assert_eq!(value, value2);
 
         // Taken from MIMI content format draft
         let target = hex::decode("87f64000f68158205c95a4dfddab84348bcc265a479299fbd3a2eecfa3d490985da5113e5480c7f1a0900662656e000269766964656f2f6d7034d820782b68747470733a2f2f6578616d706c652e636f6d2f73746f726167652f386b7342346253727252452e6d7034001a2a36ced1015021399320958a6f4c745dde670d95e0d84cc86cf2c33f21527d1dd76f5b400158209ab17a8cf0890baaae7ee016c7312fcc080ba46498389458ee44f0276e783163781c3220686f757273206f66206b6579207369676e696e6720766964656f6b62696766696c652e6d7034").unwrap();
