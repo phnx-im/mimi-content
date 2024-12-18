@@ -14,12 +14,18 @@ use std::collections::HashMap;
 pub struct MimiContent {
     replaces: Option<ByteBuf>,
     topic_id: ByteBuf,
-    expires: u32,
+    expires: Expiration,
     in_reply_to: Option<InReplyTo>,
     last_seen: Vec<ByteBuf>,
     extensions: HashMap<String, ByteBuf>, // TODO: Enforce max sizes
     nested_part: NestedPart,
     // TODO: Wrapper struct for MessageDerivedValues, like messageId, roomUrl, hubAcceptedTimestamp?
+}
+
+#[derive(Serde_list, PartialEq, Eq, Debug, Clone)]
+pub struct Expiration {
+    relative: bool,
+    time: u32,
 }
 
 #[derive(Serde_list, PartialEq, Eq, Debug, Clone)]
@@ -33,7 +39,6 @@ pub struct InReplyTo {
 pub struct NestedPart {
     disposition: Disposition,
     language: String, // TODO: Parse as Vec<LanguageTag> ?
-    part_index: u16,  // TODO: Why is this needed?
     #[externally_tagged]
     part: NestedPartContent,
 }
@@ -53,43 +58,6 @@ pub enum Disposition {
     Custom(u8),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Url(String);
-
-impl Serialize for Url {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        ciborium::Value::Tag(32, Box::new(ciborium::Value::Text(self.0.clone())))
-            .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Url {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = ciborium::Value::deserialize(deserializer)?;
-        if let ciborium::Value::Tag(32, v) = value {
-            if let ciborium::Value::Text(url) = *v {
-                Ok(Self(url))
-            } else {
-                Err(de::Error::invalid_type(
-                    de::Unexpected::StructVariant,
-                    &"Url must be a string",
-                ))
-            }
-        } else {
-            Err(de::Error::invalid_type(
-                de::Unexpected::StructVariant,
-                &"Url must have tag 32",
-            ))
-        }
-    }
-}
-
 #[derive(ExternallyTagged, Debug, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum NestedPartContent {
@@ -100,7 +68,7 @@ pub enum NestedPartContent {
     } = 1,
     ExternalPart {
         content_type: String,
-        url: Url,
+        url: String,
         expires: u32,
         size: u64,
         enc_alg: u16,
@@ -138,14 +106,16 @@ mod tests {
         let value = MimiContent {
             replaces: None,
             topic_id: ByteBuf::from(b""),
-            expires: 0,
+            expires: Expiration {
+                relative: false,
+                time: 0,
+            },
             in_reply_to: None,
             last_seen: vec![],
             extensions: HashMap::new(),
             nested_part: NestedPart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part_index: 0,
                 part: NestedPartContent::SinglePart {
                     content_type: "text/markdown;charset=utf-8".to_owned(), // Mistake in content format draft: It says variant=GFM here
                     content: ByteBuf::from(
@@ -173,7 +143,10 @@ mod tests {
         let value = MimiContent {
             replaces: None,
             topic_id: ByteBuf::from(b""),
-            expires: 0,
+            expires: Expiration {
+                relative: false,
+                time: 0,
+            },
             in_reply_to: Some(InReplyTo {
                 message: hex::decode(
                     "d3c14744d1791d02548232c23d35efa97668174ba385af066011e43bd7e51501",
@@ -196,7 +169,6 @@ mod tests {
             nested_part: NestedPart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part_index: 0,
                 part: NestedPartContent::SinglePart {
                     content_type: "text/markdown;charset=utf-8".to_owned(), // Mistake in content format draft: It says variant=GFM here
                     content: ByteBuf::from(b"Right on! _Congratulations_ 'all!"),
@@ -222,7 +194,10 @@ mod tests {
         let value = MimiContent {
             replaces: None,
             topic_id: ByteBuf::from(b""),
-            expires: 0,
+            expires: Expiration {
+                relative: false,
+                time: 0,
+            },
             in_reply_to: Some(InReplyTo {
                 message: hex::decode(
                     "d3c14744d1791d02548232c23d35efa97668174ba385af066011e43bd7e51501",
@@ -245,7 +220,6 @@ mod tests {
             nested_part: NestedPart {
                 disposition: Disposition::Reaction,
                 language: "".to_owned(),
-                part_index: 0,
                 part: NestedPartContent::SinglePart {
                     content_type: "text/plain;charset=utf-8".to_owned(),
                     content: ByteBuf::from("♥"),
@@ -275,7 +249,10 @@ mod tests {
                     .into(),
             ),
             topic_id: ByteBuf::from(b""),
-            expires: 0,
+            expires: Expiration {
+                relative: false,
+                time: 0,
+            },
             in_reply_to: Some(InReplyTo {
                 message: hex::decode(
                     "d3c14744d1791d02548232c23d35efa97668174ba385af066011e43bd7e51501",
@@ -301,7 +278,6 @@ mod tests {
             nested_part: NestedPart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part_index: 0,
                 part: NestedPartContent::SinglePart {
                     content_type: "text/markdown;charset=utf-8".to_owned(), // Mistake in content format draft: It says variant=GFM here
                     content: ByteBuf::from(b"Right on! _Congratulations_ y'all!"),
@@ -331,7 +307,10 @@ mod tests {
                     .into(),
             ),
             topic_id: ByteBuf::from(b""),
-            expires: 0,
+            expires: Expiration {
+                relative: false,
+                time: 0,
+            },
             in_reply_to: Some(InReplyTo {
                 message: hex::decode(
                     "d3c14744d1791d02548232c23d35efa97668174ba385af066011e43bd7e51501",
@@ -354,7 +333,6 @@ mod tests {
             nested_part: NestedPart {
                 disposition: Disposition::Reaction, // The draft writes Render, but uses the number for Reaction
                 language: "".to_owned(),
-                part_index: 0,
                 part: NestedPartContent::NullPart,
             },
         };
@@ -377,7 +355,7 @@ mod tests {
         let value = MimiContent {
             replaces: None,
             topic_id: ByteBuf::from(b""),
-            expires: 1644390004,
+            expires: Expiration { relative: false, time: 1644390004 },
             in_reply_to: None,
             last_seen: vec![hex::decode(
                 "1a771ca1d84f8fda4184a1e02a549e201bf434c6bfcf1237fa45463c6861853b",
@@ -388,7 +366,6 @@ mod tests {
             nested_part: NestedPart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part_index: 0,
                 part: NestedPartContent::SinglePart {
                     content_type: "text/markdown;charset=utf-8".to_owned(), // Mistake in content format draft: It says variant=GFM here
                     content: ByteBuf::from(b"__*VPN GOING DOWN*__\nI'm rebooting the VPN in ten minutes unless anyone objects."),
@@ -414,7 +391,10 @@ mod tests {
         let value = MimiContent {
             replaces: None,
             topic_id: ByteBuf::from(b""),
-            expires: 0,
+            expires: Expiration {
+                relative: false,
+                time: 0,
+            },
             in_reply_to: None,
             last_seen: vec![hex::decode(
                 "5c95a4dfddab84348bcc265a479299fbd3a2eecfa3d490985da5113e5480c7f1",
@@ -425,10 +405,9 @@ mod tests {
             nested_part: NestedPart {
                 disposition: Disposition::Attachment,
                 language: "en".to_owned(),
-                part_index: 0,
                 part: NestedPartContent::ExternalPart {
                     content_type: "video/mp4".to_owned(),
-                    url: Url("https://example.com/storage/8ksB4bSrrRE.mp4".to_owned()),
+                    url: "https://example.com/storage/8ksB4bSrrRE.mp4".to_owned(),
                     expires: 0,
                     size: 708234961,
                     enc_alg: 1,
@@ -469,7 +448,10 @@ mod tests {
         let value = MimiContent {
             replaces: None,
             topic_id: ByteBuf::from(b"Foo 118"),
-            expires: 0,
+            expires: Expiration {
+                relative: false,
+                time: 0,
+            },
             in_reply_to: None,
             last_seen: vec![hex::decode(
                 "b267614d43e7676d28ef5b15e8676f23679fe365c78849d83e2ba0ae8196ec4e",
@@ -480,10 +462,9 @@ mod tests {
             nested_part: NestedPart {
                 disposition: Disposition::Session,
                 language: "".to_owned(),
-                part_index: 0,
                 part: NestedPartContent::ExternalPart {
                     content_type: "".to_owned(),
-                    url: Url("https://example.com/join/12345".to_owned()),
+                    url: "https://example.com/join/12345".to_owned(),
                     expires: 0,
                     size: 0,
                     enc_alg: 0,
@@ -516,21 +497,22 @@ mod tests {
         let value = MimiContent {
             replaces: None,
             topic_id: ByteBuf::from(b""),
-            expires: 0,
+            expires: Expiration {
+                relative: false,
+                time: 0,
+            },
             in_reply_to: None,
             last_seen: vec![],
             extensions: HashMap::new(),
             nested_part: NestedPart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part_index: 0,
                 part: NestedPartContent::MultiPart {
                     part_semantics: PartSemantics::ChooseOne,
                     parts: vec![
                         NestedPart {
                             disposition: Disposition::Render,
                             language: "".to_owned(),
-                            part_index: 1,
                             part: NestedPartContent::SinglePart {
                                 content_type: "text/markdown;variant=GFM".to_owned(),
                                 content: ByteBuf::from(b"# Welcome!"),
@@ -539,7 +521,6 @@ mod tests {
                         NestedPart {
                             disposition: Disposition::Render,
                             language: "".to_owned(),
-                            part_index: 2, // Mimi content format draft has a wrong comment here
                             part: NestedPartContent::SinglePart {
                                 content_type: "application/vnd.examplevendor-fancy-im-message"
                                     .to_owned(),
