@@ -8,18 +8,79 @@ use serde::{
 };
 use serde_bytes::ByteBuf;
 use serde_list::{ExternallyTagged, Serde_custom_u8, Serde_list};
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    io::{Cursor, Read},
+};
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("unsupported content type")]
+    UnsupportedContentType,
+    #[error("not UTF-8")]
+    NotUtf8,
+    #[error("deserialization failed")]
+    DeserilizationFailed,
+}
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Serde_list, PartialEq, Eq, Debug, Clone)]
 pub struct MimiContent {
-    replaces: Option<ByteBuf>,
-    topic_id: ByteBuf,
-    expires: Option<Expiration>, // TODO: RFC does not allow null
-    in_reply_to: Option<InReplyTo>,
-    last_seen: Vec<ByteBuf>,
-    extensions: HashMap<String, ByteBuf>, // TODO: Enforce max sizes
-    nested_part: NestedPart,
+    pub replaces: Option<ByteBuf>,
+    pub topic_id: ByteBuf,
+    pub expires: Option<Expiration>, // TODO: RFC does not allow null
+    pub in_reply_to: Option<InReplyTo>, // TODO: Replace struct with hash
+    pub last_seen: Vec<ByteBuf>,
+    pub extensions: HashMap<String, ByteBuf>, // TODO: Enforce max sizes
+    pub nested_part: NestedPart,
     // TODO: Wrapper struct for MessageDerivedValues, like messageId, roomUrl, hubAcceptedTimestamp?
+}
+
+impl MimiContent {
+    pub fn simple_markdown_message(markdown: String) -> Self {
+        Self {
+            replaces: None,
+            topic_id: ByteBuf::from(b""),
+            expires: None,
+            in_reply_to: None,
+            last_seen: vec![],
+            extensions: HashMap::new(),
+            nested_part: NestedPart {
+                disposition: Disposition::Render,
+                language: "".to_owned(),
+                part: NestedPartContent::SinglePart {
+                    content_type: "text/markdown".to_owned(),
+                    content: ByteBuf::from(markdown.into_bytes()),
+                },
+            },
+        }
+    }
+
+    pub fn string_rendering(&self) -> Result<String> {
+        // For now, we only support SingleParts that contain markdown messages.
+        match &self.nested_part.part {
+            NestedPartContent::SinglePart {
+                content,
+                content_type,
+            } if content_type == "text/markdown" => {
+                let markdown =
+                    String::from_utf8(content.clone().into_vec()).map_err(|_| Error::NotUtf8)?;
+                Ok(markdown)
+            }
+            _ => Err(Error::UnsupportedContentType),
+        }
+    }
+
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut result = Vec::new();
+        ciborium::ser::into_writer(&self, &mut result).unwrap();
+        result
+    }
+
+    pub fn deserialize(input: &[u8]) -> Result<Self> {
+        ciborium::de::from_reader(Cursor::new(input)).map_err(|_| Error::DeserilizationFailed)
+    }
 }
 
 #[derive(Serde_list, PartialEq, Eq, Debug, Clone)]
@@ -32,15 +93,15 @@ pub struct Expiration {
 pub struct InReplyTo {
     message: ByteBuf,
     hash_alg: u8, // TODO: Enum
-    hash: ByteBuf,
+    pub hash: ByteBuf,
 }
 
 #[derive(Serde_list, Debug, Clone, PartialEq, Eq)]
 pub struct NestedPart {
-    disposition: Disposition,
+    pub disposition: Disposition,
     language: String, // TODO: Parse as Vec<LanguageTag> ?
     #[externally_tagged]
-    part: NestedPartContent,
+    pub part: NestedPartContent,
 }
 
 #[derive(Serde_custom_u8, Debug, Clone, Copy, Eq, PartialEq)]
@@ -138,11 +199,10 @@ mod tests {
             },
         };
 
-        let mut result = Vec::new();
-        ciborium::ser::into_writer(&value, &mut result).unwrap();
+        let result = value.serialize();
 
         // Test deserialization
-        let value2 = ciborium::de::from_reader(Cursor::new(result.clone())).unwrap();
+        let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
         // TODO: Mimi draft is wrong here
@@ -209,11 +269,10 @@ mod tests {
             },
         };
 
-        let mut result = Vec::new();
-        ciborium::ser::into_writer(&value, &mut result).unwrap();
+        let result = value.serialize();
 
         // Test deserialization
-        let value2 = ciborium::de::from_reader(Cursor::new(result.clone())).unwrap();
+        let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
         // Taken from MIMI content format draft
@@ -286,11 +345,10 @@ mod tests {
             },
         };
 
-        let mut result = Vec::new();
-        ciborium::ser::into_writer(&value, &mut result).unwrap();
+        let result = value.serialize();
 
         // Test deserialization
-        let value2 = ciborium::de::from_reader(Cursor::new(result.clone())).unwrap();
+        let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
         // Taken from MIMI content format draft
@@ -369,11 +427,10 @@ mod tests {
             },
         };
 
-        let mut result = Vec::new();
-        ciborium::ser::into_writer(&value, &mut result).unwrap();
+        let result = value.serialize();
 
         // Test deserialization
-        let value2 = ciborium::de::from_reader(Cursor::new(result.clone())).unwrap();
+        let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
         // Taken from MIMI content format draft
@@ -451,11 +508,10 @@ mod tests {
             },
         };
 
-        let mut result = Vec::new();
-        ciborium::ser::into_writer(&value, &mut result).unwrap();
+        let result = value.serialize();
 
         // Test deserialization
-        let value2 = ciborium::de::from_reader(Cursor::new(result.clone())).unwrap();
+        let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
         // Taken from MIMI content format draft
@@ -511,11 +567,10 @@ mod tests {
             },
         };
 
-        let mut result = Vec::new();
-        ciborium::ser::into_writer(&value, &mut result).unwrap();
+        let result = value.serialize();
 
         // Test deserialization
-        let value2 = ciborium::de::from_reader(Cursor::new(result.clone())).unwrap();
+        let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
         // Taken from MIMI content format draft
@@ -592,11 +647,10 @@ mod tests {
             },
         };
 
-        let mut result = Vec::new();
-        ciborium::ser::into_writer(&value, &mut result).unwrap();
+        let result = value.serialize();
 
         // Test deserialization
-        let value2 = ciborium::de::from_reader(Cursor::new(result.clone())).unwrap();
+        let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
         // Taken from MIMI content format draft
@@ -680,11 +734,10 @@ mod tests {
             },
         };
 
-        let mut result = Vec::new();
-        ciborium::ser::into_writer(&value, &mut result).unwrap();
+        let result = value.serialize();
 
         // Test deserialization
-        let value2 = ciborium::de::from_reader(Cursor::new(result.clone())).unwrap();
+        let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
         // Taken from MIMI content format draft
@@ -771,11 +824,10 @@ mod tests {
             },
         };
 
-        let mut result = Vec::new();
-        ciborium::ser::into_writer(&value, &mut result).unwrap();
+        let result = value.serialize();
 
         // Test deserialization
-        let value2 = ciborium::de::from_reader(Cursor::new(result.clone())).unwrap();
+        let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
         // There is no target in the spec
