@@ -8,10 +8,14 @@ use serde::{
 };
 use serde_bytes::ByteBuf;
 use serde_list::{ExternallyTagged, Serde_custom_u8, Serde_list};
+use sha2::Digest;
 use std::{
     collections::HashMap,
-    io::{Cursor, Read},
+    io::Cursor,
+    time::{SystemTime, UNIX_EPOCH},
 };
+
+use crate::{MessageStatus, MessageStatusReport, PerMessageStatus, Timestamp};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -20,10 +24,10 @@ pub enum Error {
     #[error("not UTF-8")]
     NotUtf8,
     #[error("deserialization failed")]
-    DeserilizationFailed,
+    DeserializationFailed,
 }
 
-type Result<T, E = Error> = std::result::Result<T, E>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Serde_list, PartialEq, Eq, Debug, Clone)]
 pub struct MimiContent {
@@ -35,6 +39,21 @@ pub struct MimiContent {
     pub extensions: HashMap<String, ByteBuf>, // TODO: Enforce max sizes
     pub nested_part: NestedPart,
     // TODO: Wrapper struct for MessageDerivedValues, like messageId, roomUrl, hubAcceptedTimestamp?
+}
+
+impl MimiContent {
+    pub fn message_id(&self, sender: &[u8], room: &[u8]) -> Vec<u8> {
+        let mut value = Vec::new();
+        value.extend(sender);
+        value.extend(room);
+        value.extend(self.serialize());
+        // result.extend(self.salt);
+
+        let hash = sha2::Sha256::digest(value);
+        let mut result = vec![0x01];
+        result.extend(&hash[0..30]);
+        result
+    }
 }
 
 impl MimiContent {
@@ -52,6 +71,41 @@ impl MimiContent {
                 part: NestedPartContent::SinglePart {
                     content_type: "text/markdown".to_owned(),
                     content: ByteBuf::from(markdown.into_bytes()),
+                },
+            },
+        }
+    }
+
+    pub fn simple_delivery_receipt(targets: &[&[u8]]) -> Self {
+        let report = MessageStatusReport {
+            timestamp: Timestamp(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            ),
+            statuses: targets
+                .into_iter()
+                .map(|target| PerMessageStatus {
+                    mimi_id: target.to_vec(),
+                    status: MessageStatus::Delivered,
+                })
+                .collect(),
+        };
+
+        Self {
+            replaces: None,
+            topic_id: ByteBuf::from(b""),
+            expires: None,
+            in_reply_to: None,
+            last_seen: vec![],
+            extensions: HashMap::new(),
+            nested_part: NestedPart {
+                disposition: Disposition::Unspecified,
+                language: "".to_owned(),
+                part: NestedPartContent::SinglePart {
+                    content_type: "application/mimi-message-status".to_owned(),
+                    content: ByteBuf::from(report.serialize()),
                 },
             },
         }
@@ -79,7 +133,7 @@ impl MimiContent {
     }
 
     pub fn deserialize(input: &[u8]) -> Result<Self> {
-        ciborium::de::from_reader(Cursor::new(input)).map_err(|_| Error::DeserilizationFailed)
+        ciborium::de::from_reader(Cursor::new(input)).map_err(|_| Error::DeserializationFailed)
     }
 }
 
@@ -158,8 +212,6 @@ pub enum PartSemantics {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-
     use super::*;
 
     fn hex_decode(input: &str) -> Vec<u8> {

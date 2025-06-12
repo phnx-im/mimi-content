@@ -209,15 +209,26 @@ pub fn derive_serde_custom_u8(input: TokenStream) -> TokenStream {
     }
 
     quote! {
+        impl #enum_name {
+            pub fn discriminant(&self) -> u8 {
+                match self {
+                    #(#variant_serializations)*
+                }
+            }
+
+            pub fn from_discriminant(value: u8) -> Self {
+                match value {
+                    #(#variant_deserializations)*
+                }
+            }
+        }
+
         impl Serialize for #enum_name {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
                 S: serde::Serializer,
             {
-                match self {
-                    #(#variant_serializations)*
-                }
-                .serialize(serializer)
+                self.discriminant().serialize(serializer)
             }
         }
 
@@ -226,11 +237,7 @@ pub fn derive_serde_custom_u8(input: TokenStream) -> TokenStream {
             where
                 D: de::Deserializer<'de>,
             {
-                let value = u8::deserialize(deserializer)?;
-
-                Ok(match value {
-                    #(#variant_deserializations)*
-                })
+                Ok(Self::from_discriminant(u8::deserialize(deserializer)?))
             }
         }
     }

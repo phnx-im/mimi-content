@@ -5,4 +5,6 @@
 mod content_container;
 mod message_status;
 
-pub use content_container::{Error, MimiContent};
+pub use content_container::{
+    Disposition, Error, Result, Expiration, InReplyTo, MimiContent, NestedPart, NestedPartContent};
+pub use message_status::{MessageStatus, MessageStatusReport, PerMessageStatus, Timestamp};

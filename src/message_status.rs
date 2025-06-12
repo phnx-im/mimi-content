@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use std::io::Cursor;
+
 use serde::{
     de::{self},
     Deserialize, Serialize,
@@ -9,14 +11,28 @@ use serde::{
 use serde_bytes::ByteBuf;
 use serde_list::{Serde_custom_u8, Serde_list};
 
+use crate::{Error, Result};
+
 #[derive(Serde_list, Debug, Clone, PartialEq, Eq)]
 pub struct MessageStatusReport {
-    timestamp: Timestamp,
-    statuses: Vec<PerMessageStatus>,
+    pub timestamp: Timestamp,
+    pub statuses: Vec<PerMessageStatus>,
+}
+
+impl MessageStatusReport {
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut result = Vec::new();
+        ciborium::ser::into_writer(&self, &mut result).unwrap();
+        result
+    }
+
+    pub fn deserialize(input: &[u8]) -> Result<Self> {
+        ciborium::de::from_reader(Cursor::new(input)).map_err(|_| Error::DeserializationFailed)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Timestamp(u64);
+pub struct Timestamp(pub u64);
 
 impl Serialize for Timestamp {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -64,8 +80,8 @@ impl<'de> Deserialize<'de> for Timestamp {
 
 #[derive(Serde_list, Debug, Clone, PartialEq, Eq)]
 pub struct PerMessageStatus {
-    message_id: ByteBuf,
-    status: MessageStatus,
+    pub mimi_id: Vec<u8>,
+    pub status: MessageStatus,
 }
 
 #[derive(Serde_custom_u8, Debug, Clone, Copy, PartialEq, Eq)]
