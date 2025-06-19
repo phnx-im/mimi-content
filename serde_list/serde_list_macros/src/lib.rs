@@ -237,6 +237,109 @@ pub fn derive_serde_custom_u8(input: TokenStream) -> TokenStream {
     .into()
 }
 
+#[proc_macro_derive(Serde_custom_u16)]
+pub fn derive_serde_custom_u16(input: TokenStream) -> TokenStream {
+    let ast = parse_macro_input!(input as DeriveInput);
+    let enum_name = ast.ident;
+
+    let Data::Enum(data) = ast.data else {
+        panic!();
+    };
+
+    // Example:
+    // Self::Variant2 => 2,
+    // Self::Custom(u) => u,
+    let mut variant_serializations = Vec::new();
+
+    // Example:
+    // 2 => Self::Variant2,
+    // u => Self::Custom(u),
+    let mut variant_deserializations = Vec::new();
+
+    let mut found_custom_field = false;
+    for variant in data.variants {
+        if found_custom_field {
+            panic!("There should be no more variants after Custom(u16)");
+        }
+
+        let variant_name = variant.ident;
+
+        match variant.fields {
+            Fields::Unit => {
+                let Expr::Lit(ExprLit {
+                    lit: Lit::Int(discriminant),
+                    ..
+                }) = variant
+                    .discriminant
+                    .expect("All normal enum variants must have an explicit discriminant value")
+                    .1
+                else {
+                    panic!("Discriminant values must be integers")
+                };
+
+                let discriminant = discriminant
+                    .base10_parse::<u16>()
+                    .expect("Discriminant must be a valid u16");
+
+                variant_serializations.push(quote! {
+                    Self::#variant_name => #discriminant,
+                });
+                variant_deserializations.push(quote! {
+                    #discriminant => Self::#variant_name,
+                });
+            }
+            Fields::Unnamed(_fields_unnamed) => {
+                if variant_name == "Custom" {
+                    variant_serializations.push(quote! {
+                        Self::Custom(u) => *u,
+                    });
+                    variant_deserializations.push(quote! {
+                        u => Self::Custom(u),
+                    });
+                    found_custom_field = true;
+                } else {
+                    panic!("Enum cannot contain fields except for Custom(u16)");
+                }
+            }
+            Fields::Named(_fields_named) => {
+                panic!("Enum cannot contain fields except for Custom(u16)")
+            }
+        };
+    }
+
+    if !found_custom_field {
+        panic!("The last variant must be Custom(u16)");
+    }
+
+    quote! {
+        impl Serialize for #enum_name {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                match self {
+                    #(#variant_serializations)*
+                }
+                .serialize(serializer)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for #enum_name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: de::Deserializer<'de>,
+            {
+                let value = u16::deserialize(deserializer)?;
+
+                Ok(match value {
+                    #(#variant_deserializations)*
+                })
+            }
+        }
+    }
+    .into()
+}
+
 #[proc_macro_derive(Serde_list, attributes(externally_tagged))]
 pub fn derive_serde_list(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
