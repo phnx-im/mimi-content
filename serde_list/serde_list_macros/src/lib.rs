@@ -134,10 +134,26 @@ pub fn derive_externally_tagged(input: TokenStream) -> TokenStream {
     .into()
 }
 
-#[proc_macro_derive(Serde_custom_u8)]
-pub fn derive_serde_custom_u8(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(Serde_custom)]
+pub fn derive_serde_custom(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let enum_name = ast.ident;
+
+    let mut repr = None;
+    for attr in &ast.attrs {
+        if attr.style != AttrStyle::Outer {
+            continue;
+        }
+        let Meta::List(list) = &attr.meta else {
+            continue;
+        };
+        if !list.path.is_ident("repr") {
+            continue;
+        }
+
+        repr = Some(list.tokens.clone());
+        break;
+    }
 
     let Data::Enum(data) = ast.data else {
         panic!();
@@ -156,7 +172,7 @@ pub fn derive_serde_custom_u8(input: TokenStream) -> TokenStream {
     let mut found_custom_field = false;
     for variant in data.variants {
         if found_custom_field {
-            panic!("There should be no more variants after Custom(u8)");
+            panic!("There should be no more variants after Custom()");
         }
 
         let variant_name = variant.ident;
@@ -173,10 +189,6 @@ pub fn derive_serde_custom_u8(input: TokenStream) -> TokenStream {
                 else {
                     panic!("Discriminant values must be integers")
                 };
-
-                let discriminant = discriminant
-                    .base10_parse::<u8>()
-                    .expect("Discriminant must be a valid u8");
 
                 variant_serializations.push(quote! {
                     Self::#variant_name => #discriminant,
@@ -195,29 +207,40 @@ pub fn derive_serde_custom_u8(input: TokenStream) -> TokenStream {
                     });
                     found_custom_field = true;
                 } else {
-                    panic!("Enum cannot contain fields except for Custom(u8)");
+                    panic!("Enum cannot contain fields except for Custom()");
                 }
             }
             Fields::Named(_fields_named) => {
-                panic!("Enum cannot contain fields except for Custom(u8)")
+                panic!("Enum cannot contain fields except for Custom()")
             }
         };
     }
 
     if !found_custom_field {
-        panic!("The last variant must be Custom(u8)");
+        panic!("The last variant must be Custom()");
     }
 
     quote! {
+        impl #enum_name {
+            pub fn repr(&self) -> #repr {
+                match self {
+                    #(#variant_serializations)*
+                }
+            }
+
+            pub fn from_repr(value: #repr) -> Self {
+                match value {
+                    #(#variant_deserializations)*
+                }
+            }
+        }
+
         impl Serialize for #enum_name {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
                 S: serde::Serializer,
             {
-                match self {
-                    #(#variant_serializations)*
-                }
-                .serialize(serializer)
+                self.repr().serialize(serializer)
             }
         }
 
@@ -226,11 +249,7 @@ pub fn derive_serde_custom_u8(input: TokenStream) -> TokenStream {
             where
                 D: de::Deserializer<'de>,
             {
-                let value = u8::deserialize(deserializer)?;
-
-                Ok(match value {
-                    #(#variant_deserializations)*
-                })
+                Ok(Self::from_repr(#repr::deserialize(deserializer)?))
             }
         }
     }

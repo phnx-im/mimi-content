@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-mod content_container;
+pub mod content_container;
 mod message_status;
 
 pub use content_container::{Error, MimiContent};
+pub use serde_bytes::ByteBuf;

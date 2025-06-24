@@ -7,7 +7,7 @@ use serde::{
     Deserialize, Serialize,
 };
 use serde_bytes::ByteBuf;
-use serde_list::{Serde_custom_u8, Serde_list};
+use serde_list::{Serde_custom, Serde_list};
 
 #[derive(Serde_list, Debug, Clone, PartialEq, Eq)]
 pub struct MessageStatusReport {
@@ -68,7 +68,7 @@ pub struct PerMessageStatus {
     status: MessageStatus,
 }
 
-#[derive(Serde_custom_u8, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serde_custom, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MessageStatus {
     Unread = 0,
