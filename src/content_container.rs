@@ -7,7 +7,7 @@ use serde::{
     Deserialize, Serialize,
 };
 use serde_bytes::ByteBuf;
-use serde_list::{ExternallyTagged, Serde_custom_u16, Serde_custom_u8, Serde_list};
+use serde_list::{ExternallyTagged, Serde_custom, Serde_list};
 use std::{collections::HashMap, io::Cursor};
 
 #[derive(Debug, thiserror::Error)]
@@ -99,7 +99,7 @@ pub struct InReplyTo {
 /// See [Named Information Hash Algorithm Registry].
 ///
 /// [Named Information Hash Algorithm Registry]: https://www.iana.org/assignments/named-information/named-information.xhtml
-#[derive(Serde_custom_u8, Debug, Clone, Copy, Eq, PartialEq, Default)]
+#[derive(Serde_custom, Debug, Clone, Copy, Eq, PartialEq, Default)]
 #[repr(u8)]
 #[non_exhaustive]
 #[allow(non_camel_case_types)]
@@ -134,48 +134,6 @@ pub enum HashAlgorithm {
     Custom(u8),
 }
 
-impl HashAlgorithm {
-    pub fn as_u8(&self) -> u8 {
-        use HashAlgorithm::*;
-        match self {
-            Unspecified => 0,
-            Sha256 => 1,
-            Sha256_128 => 2,
-            Sha256_120 => 3,
-            Sha256_96 => 4,
-            Sha256_64 => 5,
-            Sha256_32 => 6,
-            Sha384 => 7,
-            Sha512 => 8,
-            Sha3_224 => 9,
-            Sha3_256 => 10,
-            Sha3_384 => 11,
-            Sha3_512 => 12,
-            Custom(value) => *value,
-        }
-    }
-
-    pub fn from_u8(value: u8) -> Self {
-        use HashAlgorithm::*;
-        match value {
-            0 => Unspecified,
-            1 => Sha256,
-            2 => Sha256_128,
-            3 => Sha256_120,
-            4 => Sha256_96,
-            5 => Sha256_64,
-            6 => Sha256_32,
-            7 => Sha384,
-            8 => Sha512,
-            9 => Sha3_224,
-            10 => Sha3_256,
-            11 => Sha3_384,
-            12 => Sha3_512,
-            _ => Self::Custom(value),
-        }
-    }
-}
-
 #[derive(Serde_list, Debug, Clone, PartialEq, Eq, Default)]
 pub struct NestedPart {
     pub disposition: Disposition,
@@ -184,7 +142,7 @@ pub struct NestedPart {
     pub part: NestedPartContent,
 }
 
-#[derive(Serde_custom_u8, Debug, Clone, Copy, Eq, PartialEq, Default)]
+#[derive(Serde_custom, Debug, Clone, Copy, Eq, PartialEq, Default)]
 #[repr(u8)]
 pub enum Disposition {
     #[default]
@@ -230,7 +188,7 @@ pub enum NestedPartContent {
     } = 3,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Serde_custom_u16)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serde_custom)]
 #[repr(u16)]
 pub enum EncryptionAlgorithm {
     None = 0,
@@ -304,92 +262,7 @@ pub enum EncryptionAlgorithm {
     Custom(u16),
 }
 
-impl EncryptionAlgorithm {
-    /// Returns the `u16` representation of the encryption algorithm.
-    pub fn as_u16(&self) -> u16 {
-        use EncryptionAlgorithm::*;
-        match self {
-            None => 0,
-            Aes128Gcm => 1,
-            Aes256Gcm => 2,
-            Aes128Ccm => 3,
-            Aes256Ccm => 4,
-            Aes128Gcm8 => 5,
-            Aes256Gcm8 => 6,
-            Aes128Gcm12 => 7,
-            Aes256Gcm12 => 8,
-            Aes128CcmShort => 9,
-            Aes256CcmShort => 10,
-            Aes128CcmShort8 => 11,
-            Aes256CcmShort8 => 12,
-            Aes128CcmShort12 => 13,
-            Aes256CcmShort12 => 14,
-            AesSivCmac256 => 15,
-            AesSivCmac384 => 16,
-            AesSivCmac512 => 17,
-            Aes128Ccm8 => 18,
-            Aes256Ccm8 => 19,
-            Aes128OcbTaglen128 => 20,
-            Aes128OcbTaglen96 => 21,
-            Aes128OcbTaglen64 => 22,
-            Aes192OcbTaglen128 => 23,
-            Aes192OcbTaglen96 => 24,
-            Aes192OcbTaglen64 => 25,
-            Aes256OcbTaglen128 => 26,
-            Aes256OcbTaglen96 => 27,
-            Aes256OcbTaglen64 => 28,
-            Chacha20Poly1305 => 29,
-            Aes128GcmSiv => 30,
-            Aes256GcmSiv => 31,
-            Aegis128L => 32,
-            Aegis256 => 33,
-            Custom(value) => *value,
-        }
-    }
-
-    pub fn from_u16(value: u16) -> Self {
-        use EncryptionAlgorithm::*;
-        match value {
-            0 => None,
-            1 => Aes128Gcm,
-            2 => Aes256Gcm,
-            3 => Aes128Ccm,
-            4 => Aes256Ccm,
-            5 => Aes128Gcm8,
-            6 => Aes256Gcm8,
-            7 => Aes128Gcm12,
-            8 => Aes256Gcm12,
-            9 => Aes128CcmShort,
-            10 => Aes256CcmShort,
-            11 => Aes128CcmShort8,
-            12 => Aes256CcmShort8,
-            13 => Aes128CcmShort12,
-            14 => Aes256CcmShort12,
-            15 => AesSivCmac256,
-            16 => AesSivCmac384,
-            17 => AesSivCmac512,
-            18 => Aes128Ccm8,
-            19 => Aes256Ccm8,
-            20 => Aes128OcbTaglen128,
-            21 => Aes128OcbTaglen96,
-            22 => Aes128OcbTaglen64,
-            23 => Aes192OcbTaglen128,
-            24 => Aes192OcbTaglen96,
-            25 => Aes192OcbTaglen64,
-            26 => Aes256OcbTaglen128,
-            27 => Aes256OcbTaglen96,
-            28 => Aes256OcbTaglen64,
-            29 => Chacha20Poly1305,
-            30 => Aes128GcmSiv,
-            31 => Aes256GcmSiv,
-            32 => Aegis128L,
-            33 => Aegis256,
-            _ => Custom(value),
-        }
-    }
-}
-
-#[derive(Serde_custom_u8, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serde_custom, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PartSemantics {
     ChooseOne = 0,
