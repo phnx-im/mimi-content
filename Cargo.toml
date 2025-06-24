@@ -11,6 +11,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+chrono = "0.4.41"
 ciborium = "0.2.2"
 hex = "0.4.3"
 serde = { version = "1.0.215", features = ["derive"] }

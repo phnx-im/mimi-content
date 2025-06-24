@@ -8,25 +8,28 @@ use serde::{
     de::{self},
     Deserialize, Serialize,
 };
+use serde_bytes::ByteBuf;
 use serde_list::{Serde_custom, Serde_list};
 
 use crate::{Error, Result};
 
-#[derive(Serde_list, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageStatusReport {
-    pub timestamp: Timestamp,
     pub statuses: Vec<PerMessageStatus>,
 }
 
 impl MessageStatusReport {
     pub fn serialize(&self) -> Vec<u8> {
         let mut result = Vec::new();
-        ciborium::ser::into_writer(&self, &mut result).unwrap();
+        ciborium::ser::into_writer(&self.statuses, &mut result).unwrap();
         result
     }
 
     pub fn deserialize(input: &[u8]) -> Result<Self> {
-        ciborium::de::from_reader(Cursor::new(input)).map_err(|_| Error::DeserializationFailed)
+        Ok(Self {
+            statuses: ciborium::de::from_reader(Cursor::new(input))
+                .map_err(|_| Error::DeserializationFailed)?,
+        })
     }
 }
 
@@ -79,7 +82,7 @@ impl<'de> Deserialize<'de> for Timestamp {
 
 #[derive(Serde_list, Debug, Clone, PartialEq, Eq)]
 pub struct PerMessageStatus {
-    pub mimi_id: Vec<u8>,
+    pub mimi_id: ByteBuf,
     pub status: MessageStatus,
 }
 
@@ -98,18 +101,15 @@ pub enum MessageStatus {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-
     use super::*;
 
     #[test]
     fn statuses() {
         let value = MessageStatusReport {
-            timestamp: Timestamp(1644284703227),
             statuses: vec![
                 PerMessageStatus {
                     mimi_id: hex::decode(
-                        "d3c14744d1791d02548232c23d35efa97668174ba385af066011e43bd7e51501",
+                        b"010714238126772e253118df3cd18fa69f90841d7df1f6f0cddab1f0dc0c9a26",
                     )
                     .unwrap()
                     .into(),
@@ -117,7 +117,7 @@ mod tests {
                 },
                 PerMessageStatus {
                     mimi_id: hex::decode(
-                        "e701beee59f9376282f39092e1041b2ac2e3aad1776570c1a28de244979c71ed",
+                        b"01efab9eca8374d3618a16b39c658689fd90d07fe666a846178cb4965c94a8bf",
                     )
                     .unwrap()
                     .into(),
@@ -125,7 +125,7 @@ mod tests {
                 },
                 PerMessageStatus {
                     mimi_id: hex::decode(
-                        "6b50bfdd71edc83554ae21380080f4a3ba77985da34528a515fac3c38e4998b8",
+                        b"0103d50d4980c0a7a0990f65534ebd4f0fa36b1f4680d6e080c19ea4a95def7b",
                     )
                     .unwrap()
                     .into(),
@@ -133,7 +133,7 @@ mod tests {
                 },
                 PerMessageStatus {
                     mimi_id: hex::decode(
-                        "5c95a4dfddab84348bcc265a479299fbd3a2eecfa3d490985da5113e5480c7f1",
+                        b"0114e486b39d705e15e3000b57290de479affbda4ec2c1b17cc25c214229ed7d",
                     )
                     .unwrap()
                     .into(),
@@ -142,16 +142,40 @@ mod tests {
             ],
         };
 
-        let mut result = Vec::new();
-        ciborium::ser::into_writer(&value, &mut result).unwrap();
+        let result = value.serialize();
 
         // Test deserialization
-        let value2 = ciborium::de::from_reader(Cursor::new(result.clone())).unwrap();
+        let value2 = MessageStatusReport::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
+        // TODO: Draft has wrong message ids
         // Taken from MIMI content format draft
-        let target = hex::decode("82d83e1b0000017ed70171fb84825820d3c14744d1791d02548232c23d35efa97668174ba385af066011e43bd7e5150102825820e701beee59f9376282f39092e1041b2ac2e3aad1776570c1a28de244979c71ed028258206b50bfdd71edc83554ae21380080f4a3ba77985da34528a515fac3c38e4998b8008258205c95a4dfddab84348bcc265a479299fbd3a2eecfa3d490985da5113e5480c7f103").unwrap();
+        let target = crate::hex_decode(
+            r"
+            84                                      # array(4)
+               82                                   # array(2)
+                  58 20                             # bytes(32)
+                     010714238126772e253118df3cd18fa6
+                     9f90841d7df1f6f0cddab1f0dc0c9a26
+                  02                                # unsigned(2)
+               82                                   # array(2)
+                  58 20                             # bytes(32)
+                     01efab9eca8374d3618a16b39c658689
+                     fd90d07fe666a846178cb4965c94a8bf
+                  02                                # unsigned(2)
+               82                                   # array(2)
+                  58 20                             # bytes(32)
+                     0103d50d4980c0a7a0990f65534ebd4f
+                     0fa36b1f4680d6e080c19ea4a95def7b
+                  00                                # unsigned(0)
+               82                                   # array(2)
+                  58 20                             # bytes(32)
+                     0114e486b39d705e15e3000b57290de4
+                     79affbda4ec2c1b17cc25c214229ed7d
+                  03                                # unsigned(3)
+            ",
+        );
 
-        assert_eq!(result, target);
+        assert_eq!(hex::encode(result), hex::encode(target));
     }
 }
