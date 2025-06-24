@@ -8,8 +8,7 @@ use serde::{
     de::{self},
     Deserialize, Serialize,
 };
-use serde_bytes::ByteBuf;
-use serde_list::{Serde_custom_u8, Serde_list};
+use serde_list::{Serde_custom, Serde_list};
 
 use crate::{Error, Result};
 
@@ -84,7 +83,7 @@ pub struct PerMessageStatus {
     pub status: MessageStatus,
 }
 
-#[derive(Serde_custom_u8, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serde_custom, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MessageStatus {
     Unread = 0,
@@ -109,7 +108,7 @@ mod tests {
             timestamp: Timestamp(1644284703227),
             statuses: vec![
                 PerMessageStatus {
-                    message_id: hex::decode(
+                    mimi_id: hex::decode(
                         "d3c14744d1791d02548232c23d35efa97668174ba385af066011e43bd7e51501",
                     )
                     .unwrap()
@@ -117,7 +116,7 @@ mod tests {
                     status: MessageStatus::Read,
                 },
                 PerMessageStatus {
-                    message_id: hex::decode(
+                    mimi_id: hex::decode(
                         "e701beee59f9376282f39092e1041b2ac2e3aad1776570c1a28de244979c71ed",
                     )
                     .unwrap()
@@ -125,7 +124,7 @@ mod tests {
                     status: MessageStatus::Read,
                 },
                 PerMessageStatus {
-                    message_id: hex::decode(
+                    mimi_id: hex::decode(
                         "6b50bfdd71edc83554ae21380080f4a3ba77985da34528a515fac3c38e4998b8",
                     )
                     .unwrap()
@@ -133,7 +132,7 @@ mod tests {
                     status: MessageStatus::Unread,
                 },
                 PerMessageStatus {
-                    message_id: hex::decode(
+                    mimi_id: hex::decode(
                         "5c95a4dfddab84348bcc265a479299fbd3a2eecfa3d490985da5113e5480c7f1",
                     )
                     .unwrap()

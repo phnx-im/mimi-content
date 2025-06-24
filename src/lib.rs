@@ -2,9 +2,11 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-mod content_container;
+pub mod content_container;
 mod message_status;
 
 pub use content_container::{
-    Disposition, Error, Result, Expiration, InReplyTo, MimiContent, NestedPart, NestedPartContent};
+    Disposition, Error, Expiration, InReplyTo, MimiContent, NestedPart, NestedPartContent, Result,
+};
 pub use message_status::{MessageStatus, MessageStatusReport, PerMessageStatus, Timestamp};
+pub use serde_bytes::ByteBuf;

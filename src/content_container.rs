@@ -7,7 +7,7 @@ use serde::{
     Deserialize, Serialize,
 };
 use serde_bytes::ByteBuf;
-use serde_list::{ExternallyTagged, Serde_custom_u8, Serde_list};
+use serde_list::{ExternallyTagged, Serde_custom, Serde_list};
 use sha2::Digest;
 use std::{
     collections::HashMap,
@@ -29,7 +29,7 @@ pub enum Error {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-#[derive(Serde_list, PartialEq, Eq, Debug, Clone)]
+#[derive(Serde_list, PartialEq, Eq, Debug, Clone, Default)]
 pub struct MimiContent {
     pub replaces: Option<ByteBuf>,
     pub topic_id: ByteBuf,
@@ -38,7 +38,8 @@ pub struct MimiContent {
     pub last_seen: Vec<ByteBuf>,
     pub extensions: HashMap<String, ByteBuf>, // TODO: Enforce max sizes
     pub nested_part: NestedPart,
-    // TODO: Wrapper struct for MessageDerivedValues, like messageId, roomUrl, hubAcceptedTimestamp?
+    // TODO: Wrapper struct for MessageDerivedValues, like messageId, roomUrl,
+    // hubAcceptedTimestamp?
 }
 
 impl MimiContent {
@@ -139,28 +140,69 @@ impl MimiContent {
 
 #[derive(Serde_list, PartialEq, Eq, Debug, Clone)]
 pub struct Expiration {
-    relative: bool,
-    time: u32,
+    pub relative: bool,
+    pub time: u32,
 }
 
 #[derive(Serde_list, PartialEq, Eq, Debug, Clone)]
 pub struct InReplyTo {
-    message: ByteBuf,
-    hash_alg: u8, // TODO: Enum
+    pub message: ByteBuf,
+    pub hash_alg: HashAlgorithm,
     pub hash: ByteBuf,
 }
 
-#[derive(Serde_list, Debug, Clone, PartialEq, Eq)]
+/// Content Hashing Algorithm
+///
+/// See [Named Information Hash Algorithm Registry].
+///
+/// [Named Information Hash Algorithm Registry]: https://www.iana.org/assignments/named-information/named-information.xhtml
+#[derive(Serde_custom, Debug, Clone, Copy, Eq, PartialEq, Default)]
+#[repr(u8)]
+#[non_exhaustive]
+#[allow(non_camel_case_types)]
+pub enum HashAlgorithm {
+    #[default]
+    Unspecified = 0,
+    /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
+    Sha256 = 1,
+    /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
+    Sha256_128 = 2,
+    /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
+    Sha256_120 = 3,
+    /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
+    Sha256_96 = 4,
+    /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
+    Sha256_64 = 5,
+    /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
+    Sha256_32 = 6,
+    /// [FIPS 180-4](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf)
+    Sha384 = 7,
+    /// [FIPS 180-4](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf)
+    Sha512 = 8,
+    /// [FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)
+    Sha3_224 = 9,
+    /// [FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)
+    Sha3_256 = 10,
+    /// [FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)
+    Sha3_384 = 11,
+    /// [FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)
+    Sha3_512 = 12,
+    /// Custom hash algorithm
+    Custom(u8),
+}
+
+#[derive(Serde_list, Debug, Clone, PartialEq, Eq, Default)]
 pub struct NestedPart {
     pub disposition: Disposition,
-    language: String, // TODO: Parse as Vec<LanguageTag> ?
+    pub language: String, // TODO: Parse as Vec<LanguageTag> ?
     #[externally_tagged]
     pub part: NestedPartContent,
 }
 
-#[derive(Serde_custom_u8, Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Serde_custom, Debug, Clone, Copy, Eq, PartialEq, Default)]
 #[repr(u8)]
 pub enum Disposition {
+    #[default]
     Unspecified = 0,
     Render = 1,
     Reaction = 2,
@@ -173,9 +215,11 @@ pub enum Disposition {
     Custom(u8),
 }
 
-#[derive(ExternallyTagged, Debug, Clone, PartialEq, Eq)]
+#[derive(ExternallyTagged, Debug, Clone, PartialEq, Eq, Default)]
 #[repr(u8)]
+#[allow(clippy::enum_variant_names)]
 pub enum NestedPartContent {
+    #[default]
     NullPart = 0,
     SinglePart {
         content_type: String,
@@ -186,11 +230,11 @@ pub enum NestedPartContent {
         url: String,
         expires: u32,
         size: u64,
-        enc_alg: u16,
+        enc_alg: EncryptionAlgorithm,
         key: ByteBuf,
         nonce: ByteBuf,
         aad: ByteBuf,
-        hash_alg: u8,
+        hash_alg: HashAlgorithm,
         content_hash: ByteBuf,
         description: String,
         filename: String,
@@ -201,7 +245,81 @@ pub enum NestedPartContent {
     } = 3,
 }
 
-#[derive(Serde_custom_u8, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serde_custom)]
+#[repr(u16)]
+pub enum EncryptionAlgorithm {
+    None = 0,
+    /// Reference: [RFC5116](https://www.rfc-editor.org/rfc/rfc5116.html)
+    Aes128Gcm = 1,
+    /// Reference: [RFC5116](https://www.rfc-editor.org/rfc/rfc5116.html)
+    Aes256Gcm = 2,
+    /// Reference: [RFC5116](https://www.rfc-editor.org/rfc/rfc5116.html)
+    Aes128Ccm = 3,
+    /// Reference: [RFC5116](https://www.rfc-editor.org/rfc/rfc5116.html)
+    Aes256Ccm = 4,
+    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+    Aes128Gcm8 = 5,
+    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+    Aes256Gcm8 = 6,
+    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+    Aes128Gcm12 = 7,
+    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+    Aes256Gcm12 = 8,
+    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+    Aes128CcmShort = 9,
+    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+    Aes256CcmShort = 10,
+    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+    Aes128CcmShort8 = 11,
+    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+    Aes256CcmShort8 = 12,
+    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+    Aes128CcmShort12 = 13,
+    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+    Aes256CcmShort12 = 14,
+    /// Reference: [RFC5297](https://www.rfc-editor.org/rfc/rfc5297.html)
+    AesSivCmac256 = 15,
+    /// Reference: [RFC5297](https://www.rfc-editor.org/rfc/rfc5297.html)
+    AesSivCmac384 = 16,
+    /// Reference: [RFC5297](https://www.rfc-editor.org/rfc/rfc5297.html)
+    AesSivCmac512 = 17,
+    /// Reference: [RFC6655](https://www.rfc-editor.org/rfc/rfc6655.html)
+    Aes128Ccm8 = 18,
+    /// Reference: [RFC6655](https://www.rfc-editor.org/rfc/rfc6655.html)
+    Aes256Ccm8 = 19,
+    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+    Aes128OcbTaglen128 = 20,
+    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+    Aes128OcbTaglen96 = 21,
+    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+    Aes128OcbTaglen64 = 22,
+    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+    Aes192OcbTaglen128 = 23,
+    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+    Aes192OcbTaglen96 = 24,
+    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+    Aes192OcbTaglen64 = 25,
+    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+    Aes256OcbTaglen128 = 26,
+    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+    Aes256OcbTaglen96 = 27,
+    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+    Aes256OcbTaglen64 = 28,
+    /// Reference: [RFC8439](https://www.rfc-editor.org/rfc/rfc8439.html)
+    Chacha20Poly1305 = 29,
+    /// Reference: [RFC8452](https://www.rfc-editor.org/rfc/rfc8452.html)
+    Aes128GcmSiv = 30,
+    /// Reference: [RFC8452](https://www.rfc-editor.org/rfc/rfc8452.html)
+    Aes256GcmSiv = 31,
+    /// Reference: [draft-irtf-cfrg-aegis-aead-08](https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/08/)
+    Aegis128L = 32,
+    /// Reference: [draft-irtf-cfrg-aegis-aead-08](https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/08/)
+    Aegis256 = 33,
+    /// Unknown algorithm
+    Custom(u16),
+}
+
+#[derive(Serde_custom, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PartSemantics {
     ChooseOne = 0,
@@ -243,7 +361,8 @@ mod tests {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
                 part: NestedPartContent::SinglePart {
-                    content_type: "text/markdown;charset=utf-8".to_owned(), // Mistake in content format draft: It says variant=GFM here
+                    // Mistake in content format draft: It says variant=GFM here
+                    content_type: "text/markdown;charset=utf-8".to_owned(),
                     content: ByteBuf::from(
                         b"Hi everyone, we just shipped release 2.0. __Good work__!",
                     ),
@@ -298,7 +417,7 @@ mod tests {
                 )
                 .unwrap()
                 .into(),
-                hash_alg: 1,
+                hash_alg: HashAlgorithm::Sha256,
                 hash: hex::decode(
                     "6b44053cb68e3f0cdd219da8d7104afc2ae5ffff782154524cef093de39345a5",
                 )
@@ -374,7 +493,7 @@ mod tests {
                 )
                 .unwrap()
                 .into(),
-                hash_alg: 1,
+                hash_alg: HashAlgorithm::Sha256,
                 hash: hex::decode(
                     "6b44053cb68e3f0cdd219da8d7104afc2ae5ffff782154524cef093de39345a5",
                 )
@@ -453,7 +572,7 @@ mod tests {
                 )
                 .unwrap()
                 .into(),
-                hash_alg: 1,
+                hash_alg: HashAlgorithm::Sha256,
                 hash: hex::decode(
                     "6b44053cb68e3f0cdd219da8d7104afc2ae5ffff782154524cef093de39345a5",
                 )
@@ -540,7 +659,7 @@ mod tests {
                 )
                 .unwrap()
                 .into(),
-                hash_alg: 1,
+                hash_alg: HashAlgorithm::Sha256,
                 hash: hex::decode(
                     "6b44053cb68e3f0cdd219da8d7104afc2ae5ffff782154524cef093de39345a5",
                 )
@@ -681,13 +800,13 @@ mod tests {
                     url: "https://example.com/storage/8ksB4bSrrRE.mp4".to_owned(),
                     expires: 0,
                     size: 708234961,
-                    enc_alg: 1,
+                    enc_alg: EncryptionAlgorithm::Aes128Gcm,
                     key: hex::decode("21399320958a6f4c745dde670d95e0d8")
                         .unwrap()
                         .into(),
                     nonce: hex::decode("c86cf2c33f21527d1dd76f5b").unwrap().into(),
                     aad: ByteBuf::from(b""),
-                    hash_alg: 1,
+                    hash_alg: HashAlgorithm::Sha256,
                     content_hash: hex::decode(
                         "9ab17a8cf0890baaae7ee016c7312fcc080ba46498389458ee44f0276e783163",
                     )
@@ -774,11 +893,11 @@ mod tests {
                     url: "https://example.com/join/12345".to_owned(),
                     expires: 0,
                     size: 0,
-                    enc_alg: 0,
+                    enc_alg: EncryptionAlgorithm::None,
                     key: ByteBuf::new(),
                     nonce: ByteBuf::new(),
                     aad: ByteBuf::new(),
-                    hash_alg: 0,
+                    hash_alg: HashAlgorithm::Unspecified,
                     content_hash: ByteBuf::from(b""),
                     description: "Join the Foo 118 conference".to_owned(),
                     filename: "".to_owned(),
