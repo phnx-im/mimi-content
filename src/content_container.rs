@@ -93,7 +93,7 @@ impl MimiContent {
 
         let hash = sha2::Sha256::digest(value);
         let mut result = vec![0x01];
-        result.extend(&hash[0..30]);
+        result.extend(&hash[0..31]);
         result
     }
 }
@@ -121,7 +121,7 @@ impl MimiContent {
     pub fn simple_delivery_receipt(targets: &[&[u8]], random_salt: &[u8]) -> Self {
         let report = MessageStatusReport {
             statuses: targets
-                .into_iter()
+                .iter()
                 .map(|target| PerMessageStatus {
                     mimi_id: ByteBuf::from(*target),
                     status: MessageStatus::Delivered,
@@ -429,6 +429,14 @@ mod tests {
             },
         };
 
+        assert_eq!(
+            hex::encode(value.message_id(
+                b"mimi://example.com/u/alice-smith",
+                b"mimi://example.com/r/engineering_team"
+            )),
+            "01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79"
+        );
+
         let result = value.serialize();
 
         // Test deserialization
@@ -490,7 +498,7 @@ mod tests {
             topic_id: ByteBuf::from(b""),
             expires: None,
             in_reply_to: Some(
-                hex::decode("010714238126772e253118df3cd18fa69f90841d7df1f6f0cddab1f0dc0c9a26")
+                hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
                     .unwrap()
                     .into(),
             ),
@@ -507,6 +515,14 @@ mod tests {
 
         let result = value.serialize();
 
+        assert_eq!(
+            hex::encode(value.message_id(
+                b"mimi://example.com/u/bob-jones",
+                b"mimi://example.com/r/engineering_team"
+            )),
+            "01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836"
+        );
+
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
@@ -521,8 +537,7 @@ mod tests {
                40                                   # bytes(0)
                f6                                   # primitive(22)
                58 20                                # bytes(32)
-                  010714238126772e253118df3cd18fa6
-                  9f90841d7df1f6f0cddab1f0dc0c9a26
+                  01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79
                a2                                   # map(2)
                   01                                # unsigned(1)
                   78 1e                             # text(30)
@@ -565,7 +580,7 @@ mod tests {
             topic_id: ByteBuf::from(b""),
             expires: None,
             in_reply_to: Some(
-                hex::decode("010714238126772e253118df3cd18fa69f90841d7df1f6f0cddab1f0dc0c9a26")
+                hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
                     .unwrap()
                     .into(),
             ),
@@ -582,11 +597,19 @@ mod tests {
 
         let result = value.serialize();
 
+        assert_eq!(
+            hex::encode(value.message_id(
+                b"mimi://example.com/u/cathy-washington",
+                b"mimi://example.com/r/engineering_team"
+            )),
+            "01b1a14a88f4480e1336be86987854f838a3ec82944d4533d8d4088578550ed7"
+        );
+
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
-        // Taken from MIMI content format draft
+        // TODO: Draft repo has wrong message ids here
         let target = hex_decode(
             r#"
             87                                      # array(7)
@@ -596,8 +619,7 @@ mod tests {
                40                                   # bytes(0)
                f6                                   # primitive(22)
                58 20                                # bytes(32)
-                  010714238126772e253118df3cd18fa6
-                  9f90841d7df1f6f0cddab1f0dc0c9a26
+               01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79
                a2                                   # map(2)
                   01                                # unsigned(1)
                   78 25                             # text(37)
@@ -635,14 +657,14 @@ mod tests {
                 .unwrap()
                 .into(),
             replaces: Some(
-                hex::decode(b"01efab9eca8374d3618a16b39c658689fd90d07fe666a846178cb4965c94a8bf")
+                hex::decode(b"01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836")
                     .unwrap()
                     .into(),
             ),
             topic_id: ByteBuf::from(b""),
             expires: None,
             in_reply_to: Some(
-                hex::decode("010714238126772e253118df3cd18fa69f90841d7df1f6f0cddab1f0dc0c9a26")
+                hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
                     .unwrap()
                     .into(),
             ),
@@ -659,18 +681,51 @@ mod tests {
 
         let result = value.serialize();
 
+        assert_eq!(
+            hex::encode(value.message_id(
+                b"mimi://example.com/u/bob-jones",
+                b"mimi://example.com/r/engineering_team"
+            )),
+            "01fdcd2f418e4b16f6ba319800a44c12b3b0730871f29385bdc6d151b15751ad"
+        );
+
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
-        // TODO: Missing from draft
-        // Taken from MIMI content format draft
-        // let target = hex_decode(
-        //     r#"
-        //     "#,
-        // );
+        // TODO: Draft repo has wrong message ids here
+        let target = hex_decode(
+            r#"
+            87                                      # array(7)
+               50                                   # bytes(16)
+                  b8c2e6d8800ecf45df39be6c45f4c042  # "\xB8\xC2\xE6؀\u000E\xCFE\xDF9\xBElE\xF4\xC0B"
+               58 20                                # bytes(32)
+                  01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836
+               40                                   # bytes(0)
+                                                    # ""
+               f6                                   # primitive(22)
+               58 20                                # bytes(32)
+                  01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79
+               a2                                   # map(2)
+                  01                                # unsigned(1)
+                  78 1e                             # text(30)
+                     6d696d693a2f2f6578616d706c652e636f6d2f752f626f622d6a6f6e6573 # "mimi://example.com/u/bob-jones"
+                  02                                # unsigned(2)
+                  78 25                             # text(37)
+                     6d696d693a2f2f6578616d706c652e636f6d2f722f656e67696e656572696e675f7465616d # "mimi://example.com/r/engineering_team"
+               85                                   # array(5)
+                  01                                # unsigned(1)
+                  60                                # text(0)
+                                                    # ""
+                  01                                # unsigned(1)
+                  78 1e                             # text(30)
+                     746578742f6d61726b646f776e3b76617269616e743d47464d2d4d494d49 # "text/markdown;variant=GFM-MIMI"
+                  58 22                             # bytes(34)
+                     5269676874206f6e21205f436f6e67726174756c6174696f6e735f207927616c6c21 # "Right on! _Congratulations_ y'all!"
+            "#,
+        );
 
-        // assert_eq!(hex::encode(result), hex::encode(target));
+        assert_eq!(hex::encode(result), hex::encode(target));
     }
 
     #[test]
@@ -680,14 +735,14 @@ mod tests {
                 .unwrap()
                 .into(),
             replaces: Some(
-                hex::decode(b"01efab9eca8374d3618a16b39c658689fd90d07fe666a846178cb4965c94a8bf")
+                hex::decode(b"01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836")
                     .unwrap()
                     .into(),
             ),
             topic_id: ByteBuf::from(b""),
             expires: None,
             in_reply_to: Some(
-                hex::decode("010714238126772e253118df3cd18fa69f90841d7df1f6f0cddab1f0dc0c9a26")
+                hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
                     .unwrap()
                     .into(),
             ),
@@ -701,18 +756,47 @@ mod tests {
 
         let result = value.serialize();
 
+        assert_eq!(
+            hex::encode(value.message_id(
+                b"mimi://example.com/u/bob-jones",
+                b"mimi://example.com/r/engineering_team"
+            )),
+            "01b85744b443e9db85de5bb826c04bcd65b625e53d17839dc8a3f21321421088"
+        );
+
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
-        // TODO: Missing from draft
-        // Taken from MIMI content format draft
-        // let target = hex_decode(
-        //     r#"
-        //     "#,
-        // );
+        // TODO: Draft repo has wrong message ids here
+        let target = hex_decode(
+            r#"
+            87                                      # array(7)
+                50                                   # bytes(16)
+                0a590d73b2c7761c39168be5ebf7f2e6  # "\nY\rs\xB2\xC7v\u001C9\u0016\x8B\xE5\xEB\xF7\xF2\xE6"
+                58 20                                # bytes(32)
+                01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836
+                40                                   # bytes(0)
+                                                    # ""
+                f6                                   # primitive(22)
+                58 20                                # bytes(32)
+                01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79
+                a2                                   # map(2)
+                01                                # unsigned(1)
+                78 1e                             # text(30)
+                    6d696d693a2f2f6578616d706c652e636f6d2f752f626f622d6a6f6e6573 # "mimi://example.com/u/bob-jones"
+                02                                # unsigned(2)
+                78 25                             # text(37)
+                    6d696d693a2f2f6578616d706c652e636f6d2f722f656e67696e656572696e675f7465616d # "mimi://example.com/r/engineering_team"
+                83                                   # array(3)
+                01                                # unsigned(1)
+                60                                # text(0)
+                                                    # ""
+                00                                # unsigned(0)
+            "#,
+        );
 
-        // assert_eq!(hex::encode(result), hex::encode(target));
+        assert_eq!(hex::encode(result), hex::encode(target));
     }
 
     #[test]
@@ -737,6 +821,14 @@ mod tests {
         };
 
         let result = value.serialize();
+
+        assert_eq!(
+            hex::encode(value.message_id(
+                b"mimi://example.com/u/alice-smith",
+                b"mimi://example.com/r/engineering_team"
+            )),
+            "0106308e2c03346eba95b24abdfa9fe643aa247debfb7192feae647155316920"
+        );
 
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
@@ -828,6 +920,14 @@ mod tests {
         };
 
         let result = value.serialize();
+
+        assert_eq!(
+            hex::encode(value.message_id(
+                b"mimi://example.com/u/bob-jones",
+                b"mimi://example.com/r/engineering_team"
+            )),
+            "01ad825f6116adeb437a7b1f95a9d9acbcc708f83f5df505d32af9c2826e8b5f"
+        );
 
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
@@ -925,6 +1025,14 @@ mod tests {
 
         let result = value.serialize();
 
+        assert_eq!(
+            hex::encode(value.message_id(
+                b"mimi://example.com/u/alice-smith",
+                b"mimi://example.com/r/engineering_team"
+            )),
+            "01d8dab2e22b75dee4f5e52bb181d2d732008a235b80375113803e36b32a5f06"
+        );
+
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
@@ -996,7 +1104,7 @@ mod tests {
             topic_id: ByteBuf::from(b""),
             expires: None,
             in_reply_to: None,
-            extensions: BTreeMap::new(),
+            extensions: extensions_alice(),
             nested_part: NestedPart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
@@ -1007,7 +1115,7 @@ mod tests {
                             disposition: Disposition::Render,
                             language: "".to_owned(),
                             part: NestedPartContent::SinglePart {
-                                content_type: "text/markdown;variant=GFM".to_owned(),
+                                content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
                                 content: ByteBuf::from(b"# Welcome!"),
                             },
                         },
@@ -1017,7 +1125,9 @@ mod tests {
                             part: NestedPartContent::SinglePart {
                                 content_type: "application/vnd.examplevendor-fancy-im-message"
                                     .to_owned(),
-                                content: ByteBuf::from(b"dc861ebaa718fd7c3ca159f71a2001"),
+                                content: hex::decode("dc861ebaa718fd7c3ca159f71a2001")
+                                    .unwrap()
+                                    .into(),
                             },
                         },
                     ],
@@ -1027,15 +1137,64 @@ mod tests {
 
         let result = value.serialize();
 
+        assert_eq!(
+            hex::encode(value.message_id(
+                b"mimi://example.com/u/alice-smith",
+                b"mimi://example.com/r/engineering_team"
+            )),
+            "015c0469c52da0938c27cfa16702e27735a4729746be5f64bc5838f754828464"
+        );
+
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
-        // TODO: Missing from draft
-        // let target = hex_decode(
-        //     r#"
-        //     "#,
-        // );
-        // assert_eq!(hex::encode(result), hex::encode(target));
+        // Taken from MIMI content format draft
+        let target = hex_decode(
+            r##"
+            87                                      # array(7)
+                50                                   # bytes(16)
+                    261c953e178af653fe3d42641b91d814  # "&\u001C\x95>\u0017\x8A\xF6S\xFE=Bd\e\x91\xD8\u0014"
+                f6                                   # primitive(22)
+                40                                   # bytes(0)
+                                                    # ""
+                f6                                   # primitive(22)
+                f6                                   # primitive(22)
+                a2                                   # map(2)
+                    01                                # unsigned(1)
+                    78 20                             # text(32)
+                        6d696d693a2f2f6578616d706c652e636f6d2f752f616c6963652d736d697468 # "mimi://example.com/u/alice-smith"
+                    02                                # unsigned(2)
+                    78 25                             # text(37)
+                        6d696d693a2f2f6578616d706c652e636f6d2f722f656e67696e656572696e675f7465616d # "mimi://example.com/r/engineering_team"
+                85                                   # array(5)
+                    01                                # unsigned(1)
+                    60                                # text(0)
+                                                    # ""
+                    03                                # unsigned(3)
+                    00                                # unsigned(0)
+                    82                                # array(2)
+                        85                             # array(5)
+                        01                          # unsigned(1)
+                        60                          # text(0)
+                                                    # ""
+                        01                          # unsigned(1)
+                        78 1e                       # text(30)
+                            746578742f6d61726b646f776e3b76617269616e743d47464d2d4d494d49 # "text/markdown;variant=GFM-MIMI"
+                        4a                          # bytes(10)
+                            232057656c636f6d6521     # "# Welcome!"
+                        85                             # array(5)
+                        01                          # unsigned(1)
+                        60                          # text(0)
+                                                    # ""
+                        01                          # unsigned(1)
+                        78 2e                       # text(46)
+                            6170706c69636174696f6e2f766e642e6578616d706c6576656e646f722d66616e63792d696d2d6d657373616765 # "application/vnd.examplevendor-fancy-im-message"
+                        4f                          # bytes(15)
+                            dc861ebaa718fd7c3ca159f71a2001 # "܆\u001E\xBA\xA7\u0018\xFD|<\xA1Y\xF7\u001A \u0001"
+            "##,
+        );
+
+        assert_eq!(hex::encode(result), hex::encode(target));
     }
 }
