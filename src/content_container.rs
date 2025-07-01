@@ -19,6 +19,8 @@ pub enum Error {
     UnsupportedContentType,
     #[error("not UTF-8")]
     NotUtf8,
+    #[error("serialization failed")]
+    SerializationFailed,
     #[error("deserialization failed")]
     DeserializationFailed,
 }
@@ -100,30 +102,33 @@ impl<'de> Deserialize<'de> for ExtensionName {
         let value = ciborium::Value::deserialize(deserializer)?;
 
         Self::from_value(value.clone()).ok_or_else(|| {
-            de::Error::invalid_type(
-                Unexpected::Str(&format!("{:?}", value)),
-                &"an extension name",
-            )
+            de::Error::invalid_type(Unexpected::Str(&format!("{value:?}")), &"an extension name")
         })
     }
 }
 
 impl MimiContent {
-    pub fn message_id(&self, sender: &[u8], room: &[u8]) -> Vec<u8> {
+    pub fn message_id(&self, sender: &[u8], room: &[u8]) -> Result<Vec<u8>> {
         let mut value = Vec::new();
         value.extend(sender);
         value.extend(room);
-        value.extend(self.serialize());
+        value.extend(self.serialize()?);
         value.extend(&self.salt);
 
         let hash = sha2::Sha256::digest(value);
         let mut result = vec![0x01];
         result.extend(&hash[0..31]);
-        result
+        Ok(result)
     }
-}
 
-impl MimiContent {
+    pub fn is_status_update(&self) -> bool {
+        if let NestedPartContent::SinglePart { content_type, .. } = &self.nested_part.part {
+            content_type == "application/mimi-message-status"
+        } else {
+            false
+        }
+    }
+
     pub fn simple_markdown_message(markdown: String, random_salt: &[u8]) -> Self {
         Self {
             salt: ByteBuf::from(random_salt),
@@ -143,33 +148,40 @@ impl MimiContent {
         }
     }
 
-    pub fn simple_delivery_receipt(targets: &[&[u8]], random_salt: &[u8]) -> (MessageStatusReport, Self) {
+    pub fn simple_receipt(
+        targets: &[&[u8]],
+        random_salt: &[u8],
+        status: MessageStatus,
+    ) -> Result<(MessageStatusReport, Self)> {
         let report = MessageStatusReport {
             statuses: targets
                 .iter()
                 .map(|target| PerMessageStatus {
                     mimi_id: ByteBuf::from(*target),
-                    status: MessageStatus::Delivered,
+                    status,
                 })
                 .collect(),
         };
 
-        (report.clone(), Self {
-            salt: ByteBuf::from(random_salt),
-            replaces: None,
-            topic_id: ByteBuf::from(b""),
-            expires: None,
-            in_reply_to: None,
-            extensions: BTreeMap::new(),
-            nested_part: NestedPart {
-                disposition: Disposition::Unspecified,
-                language: "".to_owned(),
-                part: NestedPartContent::SinglePart {
-                    content_type: "application/mimi-message-status".to_owned(),
-                    content: ByteBuf::from(report.serialize()),
+        Ok((
+            report.clone(),
+            Self {
+                salt: ByteBuf::from(random_salt),
+                replaces: None,
+                topic_id: ByteBuf::from(b""),
+                expires: None,
+                in_reply_to: None,
+                extensions: BTreeMap::new(),
+                nested_part: NestedPart {
+                    disposition: Disposition::Unspecified,
+                    language: "".to_owned(),
+                    part: NestedPartContent::SinglePart {
+                        content_type: "application/mimi-message-status".to_owned(),
+                        content: ByteBuf::from(report.serialize()?),
+                    },
                 },
             },
-        })
+        ))
     }
 
     pub fn string_rendering(&self) -> Result<String> {
@@ -187,10 +199,10 @@ impl MimiContent {
         }
     }
 
-    pub fn serialize(&self) -> Vec<u8> {
+    pub fn serialize(&self) -> Result<Vec<u8>> {
         let mut result = Vec::new();
-        ciborium::ser::into_writer(&self, &mut result).unwrap();
-        result
+        ciborium::ser::into_writer(&self, &mut result).map_err(|_| Error::SerializationFailed)?;
+        Ok(result)
     }
 
     pub fn deserialize(input: &[u8]) -> Result<Self> {
@@ -455,14 +467,18 @@ mod tests {
         };
 
         assert_eq!(
-            hex::encode(value.message_id(
-                b"mimi://example.com/u/alice-smith",
-                b"mimi://example.com/r/engineering_team"
-            )),
+            hex::encode(
+                value
+                    .message_id(
+                        b"mimi://example.com/u/alice-smith",
+                        b"mimi://example.com/r/engineering_team"
+                    )
+                    .unwrap()
+            ),
             "01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79"
         );
 
-        let result = value.serialize();
+        let result = value.serialize().unwrap();
 
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
@@ -538,13 +554,17 @@ mod tests {
             },
         };
 
-        let result = value.serialize();
+        let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(value.message_id(
-                b"mimi://example.com/u/bob-jones",
-                b"mimi://example.com/r/engineering_team"
-            )),
+            hex::encode(
+                value
+                    .message_id(
+                        b"mimi://example.com/u/bob-jones",
+                        b"mimi://example.com/r/engineering_team"
+                    )
+                    .unwrap()
+            ),
             "01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836"
         );
 
@@ -620,13 +640,17 @@ mod tests {
             },
         };
 
-        let result = value.serialize();
+        let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(value.message_id(
-                b"mimi://example.com/u/cathy-washington",
-                b"mimi://example.com/r/engineering_team"
-            )),
+            hex::encode(
+                value
+                    .message_id(
+                        b"mimi://example.com/u/cathy-washington",
+                        b"mimi://example.com/r/engineering_team"
+                    )
+                    .unwrap()
+            ),
             "01b1a14a88f4480e1336be86987854f838a3ec82944d4533d8d4088578550ed7"
         );
 
@@ -704,13 +728,17 @@ mod tests {
             },
         };
 
-        let result = value.serialize();
+        let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(value.message_id(
-                b"mimi://example.com/u/bob-jones",
-                b"mimi://example.com/r/engineering_team"
-            )),
+            hex::encode(
+                value
+                    .message_id(
+                        b"mimi://example.com/u/bob-jones",
+                        b"mimi://example.com/r/engineering_team"
+                    )
+                    .unwrap()
+            ),
             "01fdcd2f418e4b16f6ba319800a44c12b3b0730871f29385bdc6d151b15751ad"
         );
 
@@ -779,13 +807,17 @@ mod tests {
             },
         };
 
-        let result = value.serialize();
+        let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(value.message_id(
-                b"mimi://example.com/u/bob-jones",
-                b"mimi://example.com/r/engineering_team"
-            )),
+            hex::encode(
+                value
+                    .message_id(
+                        b"mimi://example.com/u/bob-jones",
+                        b"mimi://example.com/r/engineering_team"
+                    )
+                    .unwrap()
+            ),
             "01b85744b443e9db85de5bb826c04bcd65b625e53d17839dc8a3f21321421088"
         );
 
@@ -845,13 +877,17 @@ mod tests {
             },
         };
 
-        let result = value.serialize();
+        let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(value.message_id(
-                b"mimi://example.com/u/alice-smith",
-                b"mimi://example.com/r/engineering_team"
-            )),
+            hex::encode(
+                value
+                    .message_id(
+                        b"mimi://example.com/u/alice-smith",
+                        b"mimi://example.com/r/engineering_team"
+                    )
+                    .unwrap()
+            ),
             "0106308e2c03346eba95b24abdfa9fe643aa247debfb7192feae647155316920"
         );
 
@@ -944,13 +980,17 @@ mod tests {
             },
         };
 
-        let result = value.serialize();
+        let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(value.message_id(
-                b"mimi://example.com/u/bob-jones",
-                b"mimi://example.com/r/engineering_team"
-            )),
+            hex::encode(
+                value
+                    .message_id(
+                        b"mimi://example.com/u/bob-jones",
+                        b"mimi://example.com/r/engineering_team"
+                    )
+                    .unwrap()
+            ),
             "01ad825f6116adeb437a7b1f95a9d9acbcc708f83f5df505d32af9c2826e8b5f"
         );
 
@@ -1048,13 +1088,17 @@ mod tests {
             },
         };
 
-        let result = value.serialize();
+        let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(value.message_id(
-                b"mimi://example.com/u/alice-smith",
-                b"mimi://example.com/r/engineering_team"
-            )),
+            hex::encode(
+                value
+                    .message_id(
+                        b"mimi://example.com/u/alice-smith",
+                        b"mimi://example.com/r/engineering_team"
+                    )
+                    .unwrap()
+            ),
             "01d8dab2e22b75dee4f5e52bb181d2d732008a235b80375113803e36b32a5f06"
         );
 
@@ -1160,13 +1204,17 @@ mod tests {
             },
         };
 
-        let result = value.serialize();
+        let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(value.message_id(
-                b"mimi://example.com/u/alice-smith",
-                b"mimi://example.com/r/engineering_team"
-            )),
+            hex::encode(
+                value
+                    .message_id(
+                        b"mimi://example.com/u/alice-smith",
+                        b"mimi://example.com/r/engineering_team"
+                    )
+                    .unwrap()
+            ),
             "015c0469c52da0938c27cfa16702e27735a4729746be5f64bc5838f754828464"
         );
 

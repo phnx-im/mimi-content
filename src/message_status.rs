@@ -19,10 +19,11 @@ pub struct MessageStatusReport {
 }
 
 impl MessageStatusReport {
-    pub fn serialize(&self) -> Vec<u8> {
+    pub fn serialize(&self) -> Result<Vec<u8>> {
         let mut result = Vec::new();
-        ciborium::ser::into_writer(&self.statuses, &mut result).unwrap();
-        result
+        ciborium::ser::into_writer(&self.statuses, &mut result)
+            .map_err(|_| Error::SerializationFailed)?;
+        Ok(result)
     }
 
     pub fn deserialize(input: &[u8]) -> Result<Self> {
@@ -142,7 +143,7 @@ mod tests {
             ],
         };
 
-        let result = value.serialize();
+        let result = value.serialize().unwrap();
 
         // Test deserialization
         let value2 = MessageStatusReport::deserialize(&result).unwrap();
