@@ -26,6 +26,31 @@ pub enum Error {
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Serde_list, PartialEq, Debug, Clone, Default)]
+pub struct MimiContentV1 {
+    pub replaces: Option<ByteBuf>,
+    pub topic_id: ByteBuf,
+    pub expires: Option<Expiration>,
+    pub in_reply_to: Option<ByteBuf>,
+    pub last_seen: Vec<ByteBuf>,
+    pub extensions: BTreeMap<ExtensionName, ciborium::Value>,
+    pub nested_part: NestedPart,
+}
+
+impl MimiContentV1 {
+    pub fn upgrade(self) -> MimiContent {
+        MimiContent {
+            salt: ByteBuf::from(b"old"),
+            replaces: self.replaces,
+            topic_id: self.topic_id,
+            expires: self.expires,
+            in_reply_to: self.in_reply_to,
+            extensions: self.extensions,
+            nested_part: self.nested_part,
+        }
+    }
+}
+
+#[derive(Serde_list, PartialEq, Debug, Clone, Default)]
 pub struct MimiContent {
     pub salt: ByteBuf, // TODO: Enforce size 16 bytes
     pub replaces: Option<ByteBuf>,
@@ -118,7 +143,7 @@ impl MimiContent {
         }
     }
 
-    pub fn simple_delivery_receipt(targets: &[&[u8]], random_salt: &[u8]) -> Self {
+    pub fn simple_delivery_receipt(targets: &[&[u8]], random_salt: &[u8]) -> (MessageStatusReport, Self) {
         let report = MessageStatusReport {
             statuses: targets
                 .iter()
@@ -129,7 +154,7 @@ impl MimiContent {
                 .collect(),
         };
 
-        Self {
+        (report.clone(), Self {
             salt: ByteBuf::from(random_salt),
             replaces: None,
             topic_id: ByteBuf::from(b""),
@@ -144,7 +169,7 @@ impl MimiContent {
                     content: ByteBuf::from(report.serialize()),
                 },
             },
-        }
+        })
     }
 
     pub fn string_rendering(&self) -> Result<String> {
