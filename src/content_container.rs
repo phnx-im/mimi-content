@@ -8,7 +8,7 @@ use serde::{
 };
 use serde_bytes::ByteBuf;
 use serde_list::{ExternallyTagged, Serde_custom, Serde_list};
-use sha2::Digest;
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, io::Cursor};
 
 use crate::{MessageStatus, MessageStatusReport, PerMessageStatus};
@@ -41,7 +41,7 @@ pub struct MimiContentV1 {
 impl MimiContentV1 {
     pub fn upgrade(self) -> MimiContent {
         MimiContent {
-            salt: ByteBuf::from(b"old"),
+            salt: ByteBuf::from([0; 16]),
             replaces: self.replaces,
             topic_id: self.topic_id,
             expires: self.expires,
@@ -54,7 +54,7 @@ impl MimiContentV1 {
 
 #[derive(Serde_list, PartialEq, Debug, Clone, Default)]
 pub struct MimiContent {
-    pub salt: ByteBuf, // TODO: Enforce size 16 bytes
+    pub salt: ByteBuf,
     pub replaces: Option<ByteBuf>,
     pub topic_id: ByteBuf,
     pub expires: Option<Expiration>,  // TODO: RFC does not allow null
@@ -109,13 +109,13 @@ impl<'de> Deserialize<'de> for ExtensionName {
 
 impl MimiContent {
     pub fn message_id(&self, sender: &[u8], room: &[u8]) -> Result<Vec<u8>> {
-        let mut value = Vec::new();
-        value.extend(sender);
-        value.extend(room);
-        value.extend(self.serialize()?);
-        value.extend(&self.salt);
+        let mut hasher = Sha256::new();
+        hasher.update(sender);
+        hasher.update(room);
+        hasher.update(self.serialize()?);
+        hasher.update(&self.salt);
+        let hash = hasher.finalize();
 
-        let hash = sha2::Sha256::digest(value);
         let mut result = vec![0x01];
         result.extend(&hash[0..31]);
         Ok(result)
@@ -129,7 +129,7 @@ impl MimiContent {
         }
     }
 
-    pub fn simple_markdown_message(markdown: String, random_salt: &[u8]) -> Self {
+    pub fn simple_markdown_message(markdown: String, random_salt: [u8; 16]) -> Self {
         Self {
             salt: ByteBuf::from(random_salt),
             replaces: None,
@@ -150,7 +150,7 @@ impl MimiContent {
 
     pub fn simple_receipt(
         targets: &[&[u8]],
-        random_salt: &[u8],
+        random_salt: [u8; 16],
         status: MessageStatus,
     ) -> Result<(MessageStatusReport, Self)> {
         let report = MessageStatusReport {
@@ -1168,7 +1168,8 @@ mod tests {
         let value = MimiContent {
             salt: hex::decode("261c953e178af653fe3d42641b91d814")
                 .unwrap()
-                .into(),
+                .try_into()
+                .unwrap(),
             replaces: None,
             topic_id: ByteBuf::from(b""),
             expires: None,
