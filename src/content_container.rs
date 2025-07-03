@@ -446,9 +446,7 @@ mod tests {
     #[test]
     fn original_message() {
         let value = MimiContent {
-            salt: hex::decode("5eed9406c2545547ab6f09f20a18b003")
-                .unwrap()
-                .into(),
+            salt: ByteBuf::from(hex::decode("5eed9406c2545547ab6f09f20a18b003").unwrap()),
             replaces: None,
             topic_id: ByteBuf::from(b""),
             expires: None,
@@ -532,9 +530,7 @@ mod tests {
     #[test]
     fn reply() {
         let value = MimiContent {
-            salt: hex::decode("11a458c73b8dd2cf404db4b378b8fe4d")
-                .unwrap()
-                .into(),
+            salt: ByteBuf::from(hex::decode("11a458c73b8dd2cf404db4b378b8fe4d").unwrap()),
             replaces: None,
             topic_id: ByteBuf::from(b""),
             expires: None,
@@ -618,9 +614,7 @@ mod tests {
     #[test]
     fn reaction() {
         let value = MimiContent {
-            salt: hex::decode("d37bc0e6a8b4f04e9e6382375f587bf6")
-                .unwrap()
-                .into(),
+            salt: ByteBuf::from(hex::decode("d37bc0e6a8b4f04e9e6382375f587bf6").unwrap()),
             replaces: None,
             topic_id: ByteBuf::from(b""),
             expires: None,
@@ -702,9 +696,7 @@ mod tests {
     #[test]
     fn edit() {
         let value = MimiContent {
-            salt: hex::decode("b8c2e6d8800ecf45df39be6c45f4c042")
-                .unwrap()
-                .into(),
+            salt: ByteBuf::from(hex::decode("b8c2e6d8800ecf45df39be6c45f4c042").unwrap()),
             replaces: Some(
                 hex::decode(b"01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836")
                     .unwrap()
@@ -784,9 +776,7 @@ mod tests {
     #[test]
     fn delete() {
         let value = MimiContent {
-            salt: hex::decode("0a590d73b2c7761c39168be5ebf7f2e6")
-                .unwrap()
-                .into(),
+            salt: ByteBuf::from(hex::decode("0a590d73b2c7761c39168be5ebf7f2e6").unwrap()),
             replaces: Some(
                 hex::decode(b"01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836")
                     .unwrap()
@@ -859,9 +849,8 @@ mod tests {
     #[test]
     fn expiring() {
         let value = MimiContent {
-            salt: hex::decode("33be993eb39f418f9295afc2ae160d2d")
-                .unwrap()
-                .into(),
+            salt: ByteBuf::from(hex::decode("33be993eb39f418f9295afc2ae160d2d")
+                .unwrap()),
             replaces: None,
             topic_id: ByteBuf::from(b""),
             expires: Some(Expiration { relative: false, time: 1644390004 }),
@@ -946,9 +935,7 @@ mod tests {
     #[test]
     fn attachments() {
         let value = MimiContent {
-            salt: hex::decode("18fac6371e4e53f1aeaf8a013155c166")
-                .unwrap()
-                .into(),
+            salt: ByteBuf::from(hex::decode("18fac6371e4e53f1aeaf8a013155c166").unwrap()),
             replaces: None,
             topic_id: ByteBuf::from(b""),
             expires: None,
@@ -1060,9 +1047,7 @@ mod tests {
     #[test]
     fn conferencing() {
         let value = MimiContent {
-            salt: hex::decode("678ac6cd54de049c3e9665cd212470fa")
-                .unwrap()
-                .into(),
+            salt: ByteBuf::from(hex::decode("678ac6cd54de049c3e9665cd212470fa").unwrap()),
             replaces: None,
             topic_id: ByteBuf::from(b"Foo 118"),
             expires: None,
@@ -1166,10 +1151,7 @@ mod tests {
     #[test]
     fn multipart() {
         let value = MimiContent {
-            salt: hex::decode("261c953e178af653fe3d42641b91d814")
-                .unwrap()
-                .try_into()
-                .unwrap(),
+            salt: ByteBuf::from(hex::decode("261c953e178af653fe3d42641b91d814").unwrap()),
             replaces: None,
             topic_id: ByteBuf::from(b""),
             expires: None,
