@@ -310,9 +310,10 @@ pub enum NestedPartContent {
     } = 3,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Serde_custom)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy, Serde_custom)]
 #[repr(u16)]
 pub enum EncryptionAlgorithm {
+    #[default]
     None = 0,
     /// Reference: [RFC5116](https://www.rfc-editor.org/rfc/rfc5116.html)
     Aes128Gcm = 1,
