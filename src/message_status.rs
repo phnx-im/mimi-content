@@ -2,15 +2,6 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::io::Cursor;
-
-use serde::{
-    de::{self},
-    Deserialize, Serialize,
-};
-use serde_bytes::ByteBuf;
-use serde_list::{Serde_custom, Serde_list};
-
 use crate::{Error, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,84 +11,81 @@ pub struct MessageStatusReport {
 
 impl MessageStatusReport {
     pub fn serialize(&self) -> Result<Vec<u8>> {
-        let mut result = Vec::new();
-        ciborium::ser::into_writer(&self.statuses, &mut result)
-            .map_err(|_| Error::SerializationFailed)?;
-        Ok(result)
+        let mut buf = Vec::new();
+        minicbor::encode(&self.statuses, &mut buf).map_err(Error::SerializationFailed)?;
+        Ok(buf)
     }
 
     pub fn deserialize(input: &[u8]) -> Result<Self> {
         Ok(Self {
-            statuses: ciborium::de::from_reader(Cursor::new(input))
-                .map_err(|_| Error::DeserializationFailed)?,
+            statuses: minicbor::decode(input).map_err(Error::DeserializationFailed)?,
         })
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Timestamp(pub u64);
+#[derive(Debug, Clone, PartialEq, Eq, minicbor_derive::Encode, minicbor_derive::Decode)]
+#[cbor(transparent)]
+pub struct Timestamp(#[cbor(tag(62))] pub u64);
 
-impl Serialize for Timestamp {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        ciborium::Value::Tag(
-            62,
-            Box::new(ciborium::Value::Integer(ciborium::value::Integer::from(
-                self.0,
-            ))),
-        )
-        .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Timestamp {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = ciborium::Value::deserialize(deserializer)?;
-        if let ciborium::Value::Tag(62, v) = value {
-            if let ciborium::Value::Integer(timestamp) = *v {
-                Ok(Timestamp(u64::try_from(timestamp).map_err(|_| {
-                    de::Error::invalid_value(
-                        de::Unexpected::Other(&i128::from(timestamp).to_string()),
-                        &"timestamp must fit in u64",
-                    )
-                })?))
-            } else {
-                Err(de::Error::invalid_type(
-                    de::Unexpected::StructVariant,
-                    &"Timestamp must be an integer",
-                ))
-            }
-        } else {
-            Err(de::Error::invalid_type(
-                de::Unexpected::StructVariant,
-                &"Timestamp must have tag 62",
-            ))
-        }
-    }
-}
-
-#[derive(Serde_list, Debug, Clone, PartialEq, Eq)]
+#[derive(minicbor_derive::Encode, minicbor_derive::Decode, Debug, Clone, PartialEq, Eq)]
+#[cbor(array)]
 pub struct PerMessageStatus {
-    pub mimi_id: ByteBuf,
+    #[cbor(n(1))]
+    #[cbor(with = "minicbor::bytes")]
+    pub mimi_id: Vec<u8>,
+    #[cbor(n(2))]
     pub status: MessageStatus,
 }
 
-#[derive(Serde_custom, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MessageStatus {
-    Unread = 0,
-    Delivered = 1,
-    Read = 2,
-    Expired = 3,
-    Deleted = 4,
-    Hidden = 5,
-    Error = 6,
+    Unread,
+    Delivered,
+    Read,
+    Expired,
+    Deleted,
+    Hidden,
+    Error,
     Custom(u8),
+}
+
+impl<C> minicbor::Encode<C> for MessageStatus {
+    fn encode<W: minicbor::encode::Write>(
+        &self,
+        e: &mut minicbor::Encoder<W>,
+        _ctx: &mut C,
+    ) -> Result<(), minicbor::encode::Error<W::Error>> {
+        e.u8(match self {
+            MessageStatus::Unread => 0,
+            MessageStatus::Delivered => 1,
+            MessageStatus::Read => 2,
+            MessageStatus::Expired => 3,
+            MessageStatus::Deleted => 4,
+            MessageStatus::Hidden => 5,
+            MessageStatus::Error => 6,
+            MessageStatus::Custom(custom_status) => *custom_status,
+        })?;
+        Ok(())
+    }
+}
+
+impl<C> minicbor::Decode<'_, C> for MessageStatus {
+    fn decode(
+        d: &mut minicbor::Decoder<'_>,
+        _ctx: &mut C,
+    ) -> Result<Self, minicbor::decode::Error> {
+        Ok(match d.u8()? {
+            0 => MessageStatus::Unread,
+            1 => MessageStatus::Delivered,
+            2 => MessageStatus::Read,
+            3 => MessageStatus::Expired,
+            4 => MessageStatus::Deleted,
+            5 => MessageStatus::Hidden,
+            6 => MessageStatus::Error,
+            custom_status => MessageStatus::Custom(custom_status),
+        })
+    }
 }
 
 #[cfg(test)]
