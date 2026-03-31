@@ -1,5 +1,10 @@
+# SPDX-FileCopyrightText: 2026 Phoenix R&D GmbH <hello@phnx.im>
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 [package]
 name = "minicbor-custom-enum"
+authors = ["Phoenix R&D GmbH <hello@phnx.im>"]
 version = "0.1.0"
 edition = "2024"
 

@@ -7,6 +7,7 @@ members = ["minicbor-custom-enum"]
 
 [package]
 name = "mimi_content"
+authors = ["Phoenix R&D GmbH <hello@phnx.im>"]
 version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
