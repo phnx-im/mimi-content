@@ -129,8 +129,6 @@ mod tests {
 
         let result = value.serialize().unwrap();
 
-        dbg!(hex::encode(&result));
-
         // Test deserialization
         let value2 = MessageStatusReport::deserialize(&result).unwrap();
         assert_eq!(value, value2);
