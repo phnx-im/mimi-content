@@ -6,7 +6,7 @@ use minicbor::bytes::ByteVec;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, convert::Infallible};
 
-use crate::{CborValue, MessageStatus, MessageStatusReport, PerMessageStatus};
+use crate::{cbor, MessageStatus, MessageStatusReport, PerMessageStatus};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -39,7 +39,7 @@ pub struct MimiContentV1 {
     #[cbor(n(4))]
     pub last_seen: Vec<ByteVec>,
     #[cbor(n(5))]
-    pub extensions: BTreeMap<ExtensionName, CborValue>,
+    pub extensions: BTreeMap<ExtensionName, cbor::Value>,
     #[cbor(n(6))]
     pub nested_part: NestedPart,
 }
@@ -93,7 +93,7 @@ pub struct MimiContent {
     #[cbor(with = "minicbor::bytes")]
     pub in_reply_to: Option<Vec<u8>>, // TODO: Enforce this is a message id
     #[cbor(n(5))]
-    pub extensions: BTreeMap<ExtensionName, CborValue>, // TODO: Enforce max sizes
+    pub extensions: BTreeMap<ExtensionName, cbor::Value>, // TODO: Enforce max sizes
     #[cbor(n(6))]
     pub nested_part: NestedPart,
 }
@@ -574,47 +574,47 @@ pub enum PartSemantics {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::{hex_decode, CborValue};
+    use crate::{cbor, hex_decode};
 
     use super::*;
 
-    fn extensions_alice() -> BTreeMap<ExtensionName, CborValue> {
+    fn extensions_alice() -> BTreeMap<ExtensionName, cbor::Value> {
         let mut extensions = BTreeMap::new();
         extensions.insert(
             ExtensionName::Number(1),
-            CborValue::from("mimi://example.com/u/alice-smith"),
+            "mimi://example.com/u/alice-smith".into(),
         );
         extensions.insert(
             ExtensionName::Number(2),
-            CborValue::from("mimi://example.com/r/engineering_team"),
+            "mimi://example.com/r/engineering_team".into(),
         );
 
         extensions
     }
 
-    fn extensions_bob() -> BTreeMap<ExtensionName, CborValue> {
+    fn extensions_bob() -> BTreeMap<ExtensionName, cbor::Value> {
         let mut extensions = BTreeMap::new();
         extensions.insert(
             ExtensionName::Number(1),
-            CborValue::from("mimi://example.com/u/bob-jones"),
+            "mimi://example.com/u/bob-jones".into(),
         );
         extensions.insert(
             ExtensionName::Number(2),
-            CborValue::from("mimi://example.com/r/engineering_team"),
+            "mimi://example.com/r/engineering_team".into(),
         );
 
         extensions
     }
 
-    fn extensions_cathy() -> BTreeMap<ExtensionName, CborValue> {
+    fn extensions_cathy() -> BTreeMap<ExtensionName, cbor::Value> {
         let mut extensions = BTreeMap::new();
         extensions.insert(
             ExtensionName::Number(1),
-            CborValue::from("mimi://example.com/u/cathy-washington"),
+            "mimi://example.com/u/cathy-washington".into(),
         );
         extensions.insert(
             ExtensionName::Number(2),
-            CborValue::from("mimi://example.com/r/engineering_team"),
+            "mimi://example.com/r/engineering_team".into(),
         );
 
         extensions

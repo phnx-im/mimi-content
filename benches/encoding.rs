@@ -1,20 +1,20 @@
 use mimi_content::{
+    cbor,
     content_container::{Disposition, ExtensionName, MimiContent, NestedPart, PartSemantics},
-    CborValue,
 };
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::collections::BTreeMap;
 
-fn extensions_alice() -> BTreeMap<ExtensionName, CborValue> {
+fn extensions_alice() -> BTreeMap<ExtensionName, cbor::Value> {
     let mut extensions = BTreeMap::new();
     extensions.insert(
         ExtensionName::Number(1),
-        CborValue::from("mimi://example.com/u/alice-smith"),
+        "mimi://example.com/u/alice-smith".into(),
     );
     extensions.insert(
         ExtensionName::Number(2),
-        CborValue::from("mimi://example.com/r/engineering_team"),
+        "mimi://example.com/r/engineering_team".into(),
     );
 
     extensions
