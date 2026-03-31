@@ -53,7 +53,10 @@ impl Default for MimiContentV1 {
             in_reply_to: None,
             last_seen: Vec::new(),
             extensions: BTreeMap::new(),
-            nested_part: NestedPart::default(),
+            nested_part: NestedPart::NullPart {
+                disposition: Disposition::default(),
+                language: String::new(),
+            },
         }
     }
 }
@@ -110,7 +113,7 @@ impl MimiContent {
     }
 
     pub fn is_status_update(&self) -> bool {
-        if let NestedPartContent::SinglePart { content_type, .. } = &self.nested_part.part {
+        if let NestedPart::SinglePart { content_type, .. } = &self.nested_part {
             content_type == "application/mimi-message-status"
         } else {
             false
@@ -125,13 +128,11 @@ impl MimiContent {
             expires: None,
             in_reply_to: None,
             extensions: BTreeMap::new(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::SinglePart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part: NestedPartContent::SinglePart {
-                    content_type: "text/markdown".to_owned(),
-                    content: markdown.into_bytes(),
-                },
+                content_type: "text/markdown".to_owned(),
+                content: markdown.into_bytes(),
             },
         }
     }
@@ -160,13 +161,11 @@ impl MimiContent {
                 expires: None,
                 in_reply_to: None,
                 extensions: BTreeMap::new(),
-                nested_part: NestedPart {
+                nested_part: NestedPart::SinglePart {
                     disposition: Disposition::Unspecified,
                     language: "".to_owned(),
-                    part: NestedPartContent::SinglePart {
-                        content_type: "application/mimi-message-status".to_owned(),
-                        content: report.serialize()?,
-                    },
+                    content_type: "application/mimi-message-status".to_owned(),
+                    content: report.serialize()?,
                 },
             },
         ))
@@ -174,10 +173,11 @@ impl MimiContent {
 
     pub fn string_rendering(&self) -> Result<String> {
         // For now, we only support SingleParts that contain markdown messages.
-        match &self.nested_part.part {
-            NestedPartContent::SinglePart {
+        match &self.nested_part {
+            NestedPart::SinglePart {
                 content,
                 content_type,
+                ..
             } if content_type == "text/markdown" => {
                 let markdown = String::from_utf8(content.clone()).map_err(|_| Error::NotUtf8)?;
                 Ok(markdown)
@@ -289,15 +289,173 @@ pub enum HashAlgorithm {
     Custom(u8),
 }
 
-#[derive(minicbor::Encode, minicbor::Decode, Debug, Clone, PartialEq, Eq, Default)]
-#[cbor(array)]
-pub struct NestedPart {
-    #[cbor(n(0))]
-    pub disposition: Disposition,
-    #[cbor(n(1))]
-    pub language: String, // TODO: Parse as Vec<LanguageTag> ?
-    #[cbor(n(2))]
-    pub part: NestedPartContent,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NestedPart {
+    NullPart {
+        disposition: Disposition,
+        language: String, // TODO: Parse as Vec<LanguageTag> ?
+    },
+    SinglePart {
+        disposition: Disposition,
+        language: String, // TODO: Parse as Vec<LanguageTag> ?
+        content_type: String,
+        content: Vec<u8>,
+    },
+    ExternalPart {
+        disposition: Disposition,
+        language: String, // TODO: Parse as Vec<LanguageTag> ?
+        content_type: String,
+        url: String,
+        expires: u32,
+        size: u64,
+        enc_alg: EncryptionAlgorithm,
+        key: Vec<u8>,
+        nonce: Vec<u8>,
+        aad: Vec<u8>,
+        hash_alg: HashAlgorithm,
+        content_hash: Vec<u8>,
+        description: String,
+        filename: String,
+    },
+    MultiPart {
+        disposition: Disposition,
+        language: String, // TODO: Parse as Vec<LanguageTag> ?
+        part_semantics: PartSemantics,
+        parts: Vec<NestedPart>,
+    },
+}
+
+impl<C> minicbor::Encode<C> for NestedPart {
+    fn encode<W: minicbor::encode::Write>(
+        &self,
+        e: &mut minicbor::Encoder<W>,
+        _ctx: &mut C,
+    ) -> Result<(), minicbor::encode::Error<W::Error>> {
+        match self {
+            NestedPart::NullPart {
+                disposition,
+                language,
+            } => {
+                e.array(3)?.encode(disposition)?.str(language)?.u8(0)?;
+            }
+            NestedPart::SinglePart {
+                disposition,
+                language,
+                content_type,
+                content,
+            } => {
+                e.array(5)?
+                    .encode(disposition)?
+                    .str(language)?
+                    .u8(1)?
+                    .str(content_type)?
+                    .bytes(content)?;
+            }
+            NestedPart::ExternalPart {
+                disposition,
+                language,
+                content_type,
+                url,
+                expires,
+                size,
+                enc_alg,
+                key,
+                nonce,
+                aad,
+                hash_alg,
+                content_hash,
+                description,
+                filename,
+            } => {
+                e.array(15)?
+                    .encode(disposition)?
+                    .str(language)?
+                    .u8(2)?
+                    .str(content_type)?
+                    .str(url)?
+                    .u32(*expires)?
+                    .u64(*size)?
+                    .encode(enc_alg)?
+                    .bytes(key)?
+                    .bytes(nonce)?
+                    .bytes(aad)?
+                    .encode(hash_alg)?
+                    .bytes(content_hash)?
+                    .str(description)?
+                    .str(filename)?;
+            }
+            NestedPart::MultiPart {
+                disposition,
+                language,
+                part_semantics,
+                parts,
+            } => {
+                e.array(5)?
+                    .encode(disposition)?
+                    .str(language)?
+                    .u8(3)?
+                    .encode(part_semantics)?
+                    .encode(parts)?;
+            }
+        };
+
+        Ok(())
+    }
+}
+
+impl<C> minicbor::Decode<'_, C> for NestedPart {
+    fn decode(
+        d: &mut minicbor::Decoder<'_>,
+        _ctx: &mut C,
+    ) -> Result<Self, minicbor::decode::Error> {
+        let array = d.array()?.ok_or(minicbor::decode::Error::message(
+            "invalid array length for NestedPart",
+        ))?;
+        let disposition = d.decode()?;
+        let language = d.str()?.to_owned();
+        let discriminant = d.u8()?;
+        match (array, discriminant) {
+            (3, 0) => Ok(NestedPart::NullPart {
+                disposition,
+                language,
+            }),
+            (5, 1) => Ok(NestedPart::SinglePart {
+                disposition,
+                language,
+                content_type: d.str()?.to_owned(),
+                content: d.bytes()?.to_vec(),
+            }),
+            (15, 2) => Ok(NestedPart::ExternalPart {
+                disposition,
+                language,
+                content_type: d.str()?.to_owned(),
+                url: d.str()?.to_owned(),
+                expires: d.u32()?,
+                size: d.u64()?,
+                enc_alg: d.decode()?,
+                key: d.bytes()?.to_vec(),
+                nonce: d.bytes()?.to_vec(),
+                aad: d.bytes()?.to_vec(),
+                hash_alg: d.decode()?,
+                content_hash: d.bytes()?.to_vec(),
+                description: d.str()?.to_owned(),
+                filename: d.str()?.to_owned(),
+            }),
+            (5, 3) => {
+                let part_semantics = d.decode()?;
+                let parts = d.decode()?;
+                Ok(NestedPart::MultiPart {
+                    disposition,
+                    language,
+                    part_semantics,
+                    parts,
+                })
+            }
+            _ => Err(minicbor::decode::Error::message(
+                "invalid discriminant for NestedPart",
+            )),
+        }
+    }
 }
 
 #[derive(
@@ -323,57 +481,6 @@ pub enum Disposition {
     Session,
     Preview,
     Custom(u8),
-}
-
-#[derive(minicbor::Encode, minicbor::Decode, Debug, Clone, PartialEq, Eq, Default)]
-#[repr(u8)]
-#[allow(clippy::enum_variant_names)]
-#[cbor(array)]
-pub enum NestedPartContent {
-    #[default]
-    #[cbor(n(0))]
-    NullPart,
-    #[cbor(n(1), array)]
-    SinglePart {
-        #[cbor(n(0))]
-        content_type: String,
-        #[cbor(n(1), with = "minicbor::bytes")]
-        content: Vec<u8>,
-    },
-    #[cbor(n(2), array)]
-    ExternalPart {
-        #[cbor(n(0))]
-        content_type: String,
-        #[cbor(n(1))]
-        url: String,
-        #[cbor(n(2))]
-        expires: u32,
-        #[cbor(n(3))]
-        size: u64,
-        #[cbor(n(4))]
-        enc_alg: EncryptionAlgorithm,
-        #[cbor(n(5), with = "minicbor::bytes")]
-        key: Vec<u8>,
-        #[cbor(n(6))]
-        nonce: Vec<u8>,
-        #[cbor(n(7), with = "minicbor::bytes")]
-        aad: Vec<u8>,
-        #[cbor(n(8))]
-        hash_alg: HashAlgorithm,
-        #[cbor(n(9), with = "minicbor::bytes")]
-        content_hash: Vec<u8>,
-        #[cbor(n(10))]
-        description: String,
-        #[cbor(n(11))]
-        filename: String,
-    },
-    #[cbor(n(3), map)]
-    MultiPart {
-        #[cbor(n(0))]
-        part_semantics: PartSemantics,
-        #[cbor(n(1))]
-        parts: Vec<NestedPart>,
-    },
 }
 
 #[derive(
@@ -522,13 +629,11 @@ mod tests {
             expires: None,
             in_reply_to: None,
             extensions: extensions_alice(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::SinglePart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part: NestedPartContent::SinglePart {
-                    content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
-                    content: b"Hi everyone, we just shipped release 2.0. __Good  work__!".to_vec(),
-                },
+                content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
+                content: b"Hi everyone, we just shipped release 2.0. __Good  work__!".to_vec(),
             },
         };
 
@@ -608,19 +713,15 @@ mod tests {
                     .into(),
             ),
             extensions: extensions_bob(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::SinglePart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part: NestedPartContent::SinglePart {
-                    content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
-                    content: b"Right on! _Congratulations_ 'all!".to_vec(),
-                },
+                content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
+                content: b"Right on! _Congratulations_ 'all!".to_vec(),
             },
         };
 
         let result = value.serialize().unwrap();
-
-        dbg!(hex::encode(&result));
 
         assert_eq!(
             hex::encode(
@@ -694,13 +795,11 @@ mod tests {
                     .into(),
             ),
             extensions: extensions_cathy(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::SinglePart {
                 disposition: Disposition::Reaction,
                 language: "".to_owned(),
-                part: NestedPartContent::SinglePart {
-                    content_type: "text/plain;charset=utf-8".to_owned(),
-                    content: "❤".as_bytes().to_vec(),
-                },
+                content_type: "text/plain;charset=utf-8".to_owned(),
+                content: "❤".as_bytes().to_vec(),
             },
         };
 
@@ -780,13 +879,11 @@ mod tests {
                     .into(),
             ),
             extensions: extensions_bob(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::SinglePart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part: NestedPartContent::SinglePart {
-                    content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
-                    content: b"Right on! _Congratulations_ y'all!".to_vec(),
-                },
+                content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
+                content: b"Right on! _Congratulations_ y'all!".to_vec(),
             },
         };
 
@@ -860,10 +957,9 @@ mod tests {
                     .into(),
             ),
             extensions: extensions_bob(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::NullPart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part: NestedPartContent::NullPart,
             },
         };
 
@@ -926,13 +1022,11 @@ mod tests {
             expires: Some(Expiration { relative: false, time: 1644390004 }),
             in_reply_to: None,
             extensions: extensions_alice(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::SinglePart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part: NestedPartContent::SinglePart {
-                    content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
-                    content: b"__*VPN GOING DOWN*__ I'm rebooting the VPN in ten minutes unless anyone objects.".to_vec(),
-                },
+                content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
+                content: b"__*VPN GOING DOWN*__ I'm rebooting the VPN in ten minutes unless anyone objects.".to_vec(),
             },
         };
 
@@ -1011,29 +1105,27 @@ mod tests {
             expires: None,
             in_reply_to: None,
             extensions: extensions_bob(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::ExternalPart {
                 disposition: Disposition::Attachment,
                 language: "en".to_owned(),
-                part: NestedPartContent::ExternalPart {
-                    content_type: "video/mp4".to_owned(),
-                    url: "https://example.com/storage/8ksB4bSrrRE.mp4".to_owned(),
-                    expires: 0,
-                    size: 708234961,
-                    enc_alg: EncryptionAlgorithm::Aes128Gcm,
-                    key: hex::decode("21399320958a6f4c745dde670d95e0d8")
-                        .unwrap()
-                        .into(),
-                    nonce: hex::decode("c86cf2c33f21527d1dd76f5b").unwrap().into(),
-                    aad: b"".to_vec(),
-                    hash_alg: HashAlgorithm::Sha256,
-                    content_hash: hex::decode(
-                        "9ab17a8cf0890baaae7ee016c7312fcc080ba46498389458ee44f0276e783163",
-                    )
+                content_type: "video/mp4".to_owned(),
+                url: "https://example.com/storage/8ksB4bSrrRE.mp4".to_owned(),
+                expires: 0,
+                size: 708234961,
+                enc_alg: EncryptionAlgorithm::Aes128Gcm,
+                key: hex::decode("21399320958a6f4c745dde670d95e0d8")
                     .unwrap()
                     .into(),
-                    description: "2 hours of key signing video".to_owned(),
-                    filename: "bigfile.mp4".to_owned(),
-                },
+                nonce: hex::decode("c86cf2c33f21527d1dd76f5b").unwrap().into(),
+                aad: b"".to_vec(),
+                hash_alg: HashAlgorithm::Sha256,
+                content_hash: hex::decode(
+                    "9ab17a8cf0890baaae7ee016c7312fcc080ba46498389458ee44f0276e783163",
+                )
+                .unwrap()
+                .into(),
+                description: "2 hours of key signing video".to_owned(),
+                filename: "bigfile.mp4".to_owned(),
             },
         };
 
@@ -1123,23 +1215,21 @@ mod tests {
             expires: None,
             in_reply_to: None,
             extensions: extensions_alice(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::ExternalPart {
                 disposition: Disposition::Session,
                 language: "".to_owned(),
-                part: NestedPartContent::ExternalPart {
-                    content_type: "".to_owned(),
-                    url: "https://example.com/join/12345".to_owned(),
-                    expires: 0,
-                    size: 0,
-                    enc_alg: EncryptionAlgorithm::None,
-                    key: Vec::new(),
-                    nonce: Vec::new(),
-                    aad: Vec::new(),
-                    hash_alg: HashAlgorithm::Unspecified,
-                    content_hash: b"".to_vec(),
-                    description: "Join the Foo 118 conference".to_owned(),
-                    filename: "".to_owned(),
-                },
+                content_type: "".to_owned(),
+                url: "https://example.com/join/12345".to_owned(),
+                expires: 0,
+                size: 0,
+                enc_alg: EncryptionAlgorithm::None,
+                key: Vec::new(),
+                nonce: Vec::new(),
+                aad: Vec::new(),
+                hash_alg: HashAlgorithm::Unspecified,
+                content_hash: b"".to_vec(),
+                description: "Join the Foo 118 conference".to_owned(),
+                filename: "".to_owned(),
             },
         };
 
@@ -1227,33 +1317,26 @@ mod tests {
             expires: None,
             in_reply_to: None,
             extensions: extensions_alice(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::MultiPart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part: NestedPartContent::MultiPart {
-                    part_semantics: PartSemantics::ChooseOne,
-                    parts: vec![
-                        NestedPart {
-                            disposition: Disposition::Render,
-                            language: "".to_owned(),
-                            part: NestedPartContent::SinglePart {
-                                content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
-                                content: b"# Welcome!".to_vec(),
-                            },
-                        },
-                        NestedPart {
-                            disposition: Disposition::Render,
-                            language: "".to_owned(),
-                            part: NestedPartContent::SinglePart {
-                                content_type: "application/vnd.examplevendor-fancy-im-message"
-                                    .to_owned(),
-                                content: hex::decode("dc861ebaa718fd7c3ca159f71a2001")
-                                    .unwrap()
-                                    .into(),
-                            },
-                        },
-                    ],
-                },
+                part_semantics: PartSemantics::ChooseOne,
+                parts: vec![
+                    NestedPart::SinglePart {
+                        disposition: Disposition::Render,
+                        language: "".to_owned(),
+                        content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
+                        content: b"# Welcome!".to_vec(),
+                    },
+                    NestedPart::SinglePart {
+                        disposition: Disposition::Render,
+                        language: "".to_owned(),
+                        content_type: "application/vnd.examplevendor-fancy-im-message".to_owned(),
+                        content: hex::decode("dc861ebaa718fd7c3ca159f71a2001")
+                            .unwrap()
+                            .into(),
+                    },
+                ],
             },
         };
 

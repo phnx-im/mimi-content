@@ -7,9 +7,7 @@ mod message_status;
 
 use std::{borrow::Cow, collections::BTreeMap};
 
-pub use content_container::{
-    Disposition, Error, Expiration, MimiContent, NestedPart, NestedPartContent, Result,
-};
+pub use content_container::{Error, Result};
 pub use message_status::{MessageStatus, MessageStatusReport, PerMessageStatus, Timestamp};
 
 #[cfg(test)]

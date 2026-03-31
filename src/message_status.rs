@@ -30,10 +30,10 @@ pub struct Timestamp(#[cbor(tag(62))] pub u64);
 #[derive(minicbor_derive::Encode, minicbor_derive::Decode, Debug, Clone, PartialEq, Eq)]
 #[cbor(array)]
 pub struct PerMessageStatus {
-    #[cbor(n(1))]
+    #[cbor(n(0))]
     #[cbor(with = "minicbor::bytes")]
     pub mimi_id: Vec<u8>,
-    #[cbor(n(2))]
+    #[cbor(n(1))]
     pub status: MessageStatus,
 }
 
@@ -132,6 +132,8 @@ mod tests {
         };
 
         let result = value.serialize().unwrap();
+
+        dbg!(hex::encode(&result));
 
         // Test deserialization
         let value2 = MessageStatusReport::deserialize(&result).unwrap();
