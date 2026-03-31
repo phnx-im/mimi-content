@@ -75,7 +75,10 @@ impl<C> minicbor::Encode<C> for CborValue {
 }
 
 impl<'b, C> minicbor::Decode<'b, C> for CborValue {
-    fn decode(d: &mut minicbor::Decoder<'b>, ctx: &mut C) -> Result<Self, minicbor::decode::Error> {
+    fn decode(
+        d: &mut minicbor::Decoder<'b>,
+        _ctx: &mut C,
+    ) -> Result<Self, minicbor::decode::Error> {
         use minicbor::data::Type;
         match d.datatype()? {
             Type::Bool => Ok(CborValue::Bool(d.bool()?)),
@@ -97,7 +100,7 @@ impl<'b, C> minicbor::Decode<'b, C> for CborValue {
                         d.skip()?;
                         break;
                     }
-                    arr.push(CborValue::decode(d, ctx)?);
+                    arr.push(CborValue::decode(d, _ctx)?);
                     if len.is_some() && arr.len() == len.unwrap() as usize {
                         break;
                     }
@@ -113,7 +116,7 @@ impl<'b, C> minicbor::Decode<'b, C> for CborValue {
                         break;
                     }
                     let k = d.str()?.to_string();
-                    let v = CborValue::decode(d, ctx)?;
+                    let v = CborValue::decode(d, _ctx)?;
                     map.insert(k, v);
                     if len.is_some() && map.len() == len.unwrap() as usize {
                         break;

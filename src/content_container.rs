@@ -188,7 +188,7 @@ impl MimiContent {
 
     pub fn serialize(&self) -> Result<Vec<u8>> {
         let mut buf = Vec::new();
-        minicbor::encode(&self, &mut buf).map_err(Error::SerializationFailed)?;
+        minicbor::encode(self, &mut buf).map_err(Error::SerializationFailed)?;
         Ok(buf)
     }
 
@@ -709,8 +709,7 @@ mod tests {
             expires: None,
             in_reply_to: Some(
                 hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
             ),
             extensions: extensions_bob(),
             nested_part: NestedPart::SinglePart {
@@ -791,8 +790,7 @@ mod tests {
             expires: None,
             in_reply_to: Some(
                 hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
             ),
             extensions: extensions_cathy(),
             nested_part: NestedPart::SinglePart {
@@ -868,15 +866,13 @@ mod tests {
             salt: hex::decode("b8c2e6d8800ecf45df39be6c45f4c042").unwrap(),
             replaces: Some(
                 hex::decode(b"01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836")
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
             ),
             topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: Some(
                 hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
             ),
             extensions: extensions_bob(),
             nested_part: NestedPart::SinglePart {
@@ -946,15 +942,13 @@ mod tests {
             salt: hex::decode("0a590d73b2c7761c39168be5ebf7f2e6").unwrap(),
             replaces: Some(
                 hex::decode(b"01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836")
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
             ),
             topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: Some(
                 hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
             ),
             extensions: extensions_bob(),
             nested_part: NestedPart::NullPart {
@@ -1113,17 +1107,14 @@ mod tests {
                 expires: 0,
                 size: 708234961,
                 enc_alg: EncryptionAlgorithm::Aes128Gcm,
-                key: hex::decode("21399320958a6f4c745dde670d95e0d8")
-                    .unwrap()
-                    .into(),
-                nonce: hex::decode("c86cf2c33f21527d1dd76f5b").unwrap().into(),
+                key: hex::decode("21399320958a6f4c745dde670d95e0d8").unwrap(),
+                nonce: hex::decode("c86cf2c33f21527d1dd76f5b").unwrap(),
                 aad: b"".to_vec(),
                 hash_alg: HashAlgorithm::Sha256,
                 content_hash: hex::decode(
                     "9ab17a8cf0890baaae7ee016c7312fcc080ba46498389458ee44f0276e783163",
                 )
-                .unwrap()
-                .into(),
+                .unwrap(),
                 description: "2 hours of key signing video".to_owned(),
                 filename: "bigfile.mp4".to_owned(),
             },
@@ -1332,9 +1323,7 @@ mod tests {
                         disposition: Disposition::Render,
                         language: "".to_owned(),
                         content_type: "application/vnd.examplevendor-fancy-im-message".to_owned(),
-                        content: hex::decode("dc861ebaa718fd7c3ca159f71a2001")
-                            .unwrap()
-                            .into(),
+                        content: hex::decode("dc861ebaa718fd7c3ca159f71a2001").unwrap(),
                     },
                 ],
             },

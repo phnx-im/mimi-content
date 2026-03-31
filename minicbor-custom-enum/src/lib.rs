@@ -3,6 +3,34 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{Data, DeriveInput, Expr, Fields, Lit, Variant, parse_macro_input};
 
+/// Derives [`minicbor::Encode`] for a C-like enum.
+///
+/// The enum must have a `#[repr(u8)]`, `#[repr(u16)]`, or `#[repr(u32)]` attribute. Each variant
+/// is encoded as its integer discriminant using the corresponding minicbor encoder method.
+///
+/// An optional *wildcard* variant — a single-field tuple variant whose field type matches the repr
+/// type (e.g. `Unknown(u8)`) — may be included. It is encoded by writing the wrapped value
+/// directly.
+///
+/// # Requirements
+///
+/// - The type must be an enum.
+/// - Must have `#[repr(u8 | u16 | u32)]`.
+/// - All non-wildcard variants must be unit variants.
+/// - At most one wildcard (tuple) variant is allowed, and its field type must equal the repr type.
+/// - Discriminants must be integer literals and must not overflow the repr type.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// #[derive(Encode, Decode)]
+/// #[repr(u8)]
+/// enum Status {
+///     Active  = 1,
+///     Pending = 2,
+///     Custom(u8),
+/// }
+/// ```
 #[proc_macro_derive(Encode)]
 pub fn derive_cbor_encode(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -194,8 +222,6 @@ fn is_type_ident(ty: &syn::Type, ident: &str) -> bool {
         if tp.qself.is_none() && tp.path.is_ident(ident))
 }
 
-// ── shared generics helper ────────────────────────────────────────────────────
-
 fn encode_impl_generics(input: &DeriveInput) -> TokenStream2 {
     let existing = &input.generics.params;
     if existing.is_empty() {
@@ -205,15 +231,12 @@ fn encode_impl_generics(input: &DeriveInput) -> TokenStream2 {
     }
 }
 
-// ── Encode expansion ──────────────────────────────────────────────────────────
-
 fn expand_encode(input: DeriveInput) -> syn::Result<TokenStream2> {
     let repr = parse_repr(&input)?;
     let name = &input.ident;
     let (_, ty_generics, where_clause) = input.generics.split_for_impl();
     let impl_generics = encode_impl_generics(&input);
     let encode_method = repr.encode_method();
-    let repr_ty = repr.rust_ty();
 
     let variants = parse_variants(&input.data, &repr)?;
 
@@ -251,7 +274,6 @@ fn expand_decode(input: DeriveInput) -> syn::Result<TokenStream2> {
     let decode_method = repr.decode_method();
 
     let variants = parse_variants(&input.data, &repr)?;
-    let repr_ty = repr.rust_ty();
 
     let (unit_variants, wildcard_variants): (Vec<_>, Vec<_>) =
         variants.iter().partition(|v| !v.is_wildcard);

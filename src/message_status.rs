@@ -100,32 +100,28 @@ mod tests {
                     mimi_id: hex::decode(
                         b"010714238126772e253118df3cd18fa69f90841d7df1f6f0cddab1f0dc0c9a26",
                     )
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
                     status: MessageStatus::Read,
                 },
                 PerMessageStatus {
                     mimi_id: hex::decode(
                         b"01efab9eca8374d3618a16b39c658689fd90d07fe666a846178cb4965c94a8bf",
                     )
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
                     status: MessageStatus::Read,
                 },
                 PerMessageStatus {
                     mimi_id: hex::decode(
                         b"0103d50d4980c0a7a0990f65534ebd4f0fa36b1f4680d6e080c19ea4a95def7b",
                     )
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
                     status: MessageStatus::Unread,
                 },
                 PerMessageStatus {
                     mimi_id: hex::decode(
                         b"0114e486b39d705e15e3000b57290de479affbda4ec2c1b17cc25c214229ed7d",
                     )
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
                     status: MessageStatus::Expired,
                 },
             ],
