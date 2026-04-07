@@ -2,46 +2,73 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use serde::{
-    de::{self, Unexpected},
-    Deserialize, Serialize,
-};
-use serde_bytes::ByteBuf;
-use serde_list::{ExternallyTagged, Serde_custom, Serde_list};
+use minicbor::bytes::ByteVec;
+use num_enum::{FromPrimitive, IntoPrimitive};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, io::Cursor};
+use std::{collections::BTreeMap, convert::Infallible};
 
-use crate::{MessageStatus, MessageStatusReport, PerMessageStatus};
+use crate::{
+    cbor, impl_encode_decode_num_enum, MessageStatus, MessageStatusReport, PerMessageStatus,
+};
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("unsupported content type")]
     UnsupportedContentType,
     #[error("not UTF-8")]
     NotUtf8,
-    #[error("serialization failed")]
-    SerializationFailed,
-    #[error("deserialization failed")]
-    DeserializationFailed,
+    #[error("encoding failed: {0}")]
+    Encode(minicbor::encode::Error<Infallible>),
+    #[error("decoding failed: {0}")]
+    Decode(minicbor::decode::Error),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-#[derive(Serde_list, PartialEq, Debug, Clone, Default)]
+#[derive(minicbor_derive::Encode, minicbor_derive::Decode, PartialEq, Debug, Clone)]
+#[cbor(array)]
 pub struct MimiContentV1 {
-    pub replaces: Option<ByteBuf>,
-    pub topic_id: ByteBuf,
+    #[cbor(n(0))]
+    #[cbor(with = "minicbor::bytes")]
+    pub replaces: Option<Vec<u8>>,
+    #[cbor(n(1))]
+    #[cbor(with = "minicbor::bytes")]
+    pub topic_id: Vec<u8>,
+    #[cbor(n(2))]
     pub expires: Option<Expiration>,
-    pub in_reply_to: Option<ByteBuf>,
-    pub last_seen: Vec<ByteBuf>,
-    pub extensions: BTreeMap<ExtensionName, ciborium::Value>,
+    #[cbor(n(3))]
+    #[cbor(with = "minicbor::bytes")]
+    pub in_reply_to: Option<Vec<u8>>,
+    #[cbor(n(4))]
+    pub last_seen: Vec<ByteVec>,
+    #[cbor(n(5))]
+    pub extensions: BTreeMap<ExtensionName, cbor::Value>,
+    #[cbor(n(6))]
     pub nested_part: NestedPart,
+}
+
+impl Default for MimiContentV1 {
+    fn default() -> Self {
+        Self {
+            replaces: None,
+            topic_id: Vec::new(),
+            expires: None,
+            in_reply_to: None,
+            last_seen: Vec::new(),
+            extensions: BTreeMap::new(),
+            nested_part: NestedPart::NullPart {
+                disposition: Disposition::Unspecified,
+                language: String::new(),
+            },
+        }
+    }
 }
 
 impl MimiContentV1 {
     pub fn upgrade(self) -> MimiContent {
         MimiContent {
-            salt: ByteBuf::from([0; 16]),
+            salt: [0; 16].to_vec(),
             replaces: self.replaces,
             topic_id: self.topic_id,
             expires: self.expires,
@@ -52,59 +79,27 @@ impl MimiContentV1 {
     }
 }
 
-#[derive(Serde_list, PartialEq, Debug, Clone, Default)]
+#[derive(minicbor_derive::Encode, minicbor_derive::Decode, PartialEq, Debug, Clone)]
+#[cbor(array)]
 pub struct MimiContent {
-    pub salt: ByteBuf,
-    pub replaces: Option<ByteBuf>,
-    pub topic_id: ByteBuf,
-    pub expires: Option<Expiration>,  // TODO: RFC does not allow null
-    pub in_reply_to: Option<ByteBuf>, // TODO: Enforce this is a message id
-    pub extensions: BTreeMap<ExtensionName, ciborium::Value>, // TODO: Enforce max sizes
+    #[cbor(n(0))]
+    #[cbor(with = "minicbor::bytes")]
+    pub salt: Vec<u8>,
+    #[cbor(n(1))]
+    #[cbor(with = "minicbor::bytes")]
+    pub replaces: Option<Vec<u8>>,
+    #[cbor(n(2))]
+    #[cbor(with = "minicbor::bytes")]
+    pub topic_id: Vec<u8>,
+    #[cbor(n(3))]
+    pub expires: Option<Expiration>, // TODO: RFC does not allow null
+    #[cbor(n(4))]
+    #[cbor(with = "minicbor::bytes")]
+    pub in_reply_to: Option<Vec<u8>>, // TODO: Enforce this is a message id
+    #[cbor(n(5))]
+    pub extensions: BTreeMap<ExtensionName, cbor::Value>, // TODO: Enforce max sizes
+    #[cbor(n(6))]
     pub nested_part: NestedPart,
-}
-
-#[derive(PartialEq, Eq, Debug, Clone, PartialOrd, Ord)]
-pub enum ExtensionName {
-    Text(String),
-    Number(ciborium::value::Integer),
-}
-
-impl ExtensionName {
-    pub fn into_value(self) -> ciborium::Value {
-        match self {
-            ExtensionName::Text(text) => ciborium::Value::Text(text),
-            ExtensionName::Number(integer) => ciborium::Value::Integer(integer),
-        }
-    }
-    pub fn from_value(value: ciborium::Value) -> Option<Self> {
-        Some(match value {
-            ciborium::Value::Text(text) => ExtensionName::Text(text),
-            ciborium::Value::Integer(integer) => ExtensionName::Number(integer),
-            _ => return None,
-        })
-    }
-}
-
-impl Serialize for ExtensionName {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.clone().into_value().serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for ExtensionName {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: de::Deserializer<'de>,
-    {
-        let value = ciborium::Value::deserialize(deserializer)?;
-
-        Self::from_value(value.clone()).ok_or_else(|| {
-            de::Error::invalid_type(Unexpected::Str(&format!("{value:?}")), &"an extension name")
-        })
-    }
 }
 
 impl MimiContent {
@@ -113,7 +108,7 @@ impl MimiContent {
         hasher.update(sender);
         hasher.update(room);
         hasher.update(self.serialize()?);
-        hasher.update(&self.salt);
+        hasher.update(self.salt.as_slice());
         let hash = hasher.finalize();
 
         let mut result = vec![0x01];
@@ -122,7 +117,7 @@ impl MimiContent {
     }
 
     pub fn is_status_update(&self) -> bool {
-        if let NestedPartContent::SinglePart { content_type, .. } = &self.nested_part.part {
+        if let NestedPart::SinglePart { content_type, .. } = &self.nested_part {
             content_type == "application/mimi-message-status"
         } else {
             false
@@ -131,19 +126,17 @@ impl MimiContent {
 
     pub fn simple_markdown_message(markdown: String, random_salt: [u8; 16]) -> Self {
         Self {
-            salt: ByteBuf::from(random_salt),
+            salt: random_salt.into(),
             replaces: None,
-            topic_id: ByteBuf::from(b""),
+            topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: None,
             extensions: BTreeMap::new(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::SinglePart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part: NestedPartContent::SinglePart {
-                    content_type: "text/markdown".to_owned(),
-                    content: ByteBuf::from(markdown.into_bytes()),
-                },
+                content_type: "text/markdown".to_owned(),
+                content: markdown.into_bytes(),
             },
         }
     }
@@ -157,7 +150,7 @@ impl MimiContent {
             statuses: targets
                 .iter()
                 .map(|target| PerMessageStatus {
-                    mimi_id: ByteBuf::from(*target),
+                    mimi_id: target.to_vec(),
                     status,
                 })
                 .collect(),
@@ -166,19 +159,17 @@ impl MimiContent {
         Ok((
             report.clone(),
             Self {
-                salt: ByteBuf::from(random_salt),
+                salt: random_salt.to_vec(),
                 replaces: None,
-                topic_id: ByteBuf::from(b""),
+                topic_id: b"".to_vec(),
                 expires: None,
                 in_reply_to: None,
                 extensions: BTreeMap::new(),
-                nested_part: NestedPart {
+                nested_part: NestedPart::SinglePart {
                     disposition: Disposition::Unspecified,
                     language: "".to_owned(),
-                    part: NestedPartContent::SinglePart {
-                        content_type: "application/mimi-message-status".to_owned(),
-                        content: ByteBuf::from(report.serialize()?),
-                    },
+                    content_type: "application/mimi-message-status".to_owned(),
+                    content: report.serialize()?,
                 },
             },
         ))
@@ -186,13 +177,13 @@ impl MimiContent {
 
     pub fn string_rendering(&self) -> Result<String> {
         // For now, we only support SingleParts that contain markdown messages.
-        match &self.nested_part.part {
-            NestedPartContent::SinglePart {
+        match &self.nested_part {
+            NestedPart::SinglePart {
                 content,
                 content_type,
+                ..
             } if content_type == "text/markdown" => {
-                let markdown =
-                    String::from_utf8(content.clone().into_vec()).map_err(|_| Error::NotUtf8)?;
+                let markdown = String::from_utf8(content.clone()).map_err(|_| Error::NotUtf8)?;
                 Ok(markdown)
             }
             _ => Err(Error::UnsupportedContentType),
@@ -200,19 +191,56 @@ impl MimiContent {
     }
 
     pub fn serialize(&self) -> Result<Vec<u8>> {
-        let mut result = Vec::new();
-        ciborium::ser::into_writer(&self, &mut result).map_err(|_| Error::SerializationFailed)?;
-        Ok(result)
+        let mut buf = Vec::new();
+        minicbor::encode(self, &mut buf).map_err(Error::Encode)?;
+        Ok(buf)
     }
 
     pub fn deserialize(input: &[u8]) -> Result<Self> {
-        ciborium::de::from_reader(Cursor::new(input)).map_err(|_| Error::DeserializationFailed)
+        minicbor::decode(input).map_err(Error::Decode)
     }
 }
 
-#[derive(Serde_list, PartialEq, Eq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone, PartialOrd, Ord)]
+pub enum ExtensionName {
+    Text(String),
+    Number(u64),
+}
+
+impl<C> minicbor::Encode<C> for ExtensionName {
+    fn encode<W: minicbor::encode::Write>(
+        &self,
+        e: &mut minicbor::Encoder<W>,
+        _ctx: &mut C,
+    ) -> Result<(), minicbor::encode::Error<W::Error>> {
+        match self {
+            ExtensionName::Text(text) => e.str(text),
+            ExtensionName::Number(integer) => e.u64(*integer),
+        }?;
+        Ok(())
+    }
+}
+
+impl<C> minicbor::Decode<'_, C> for ExtensionName {
+    fn decode(
+        d: &mut minicbor::Decoder<'_>,
+        _ctx: &mut C,
+    ) -> Result<Self, minicbor::decode::Error> {
+        if let Ok(numerical_value) = d.u64() {
+            Ok(Self::Number(numerical_value))
+        } else {
+            let text_value = d.str()?;
+            Ok(Self::Text(text_value.to_owned()))
+        }
+    }
+}
+
+#[derive(minicbor_derive::Encode, minicbor_derive::Decode, PartialEq, Eq, Debug, Clone)]
+#[cbor(array)]
 pub struct Expiration {
+    #[cbor(n(0))]
     pub relative: bool,
+    #[cbor(n(1))]
     pub time: u32,
 }
 
@@ -221,12 +249,11 @@ pub struct Expiration {
 /// See [Named Information Hash Algorithm Registry].
 ///
 /// [Named Information Hash Algorithm Registry]: https://www.iana.org/assignments/named-information/named-information.xhtml
-#[derive(Serde_custom, Debug, Clone, Copy, Eq, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 #[non_exhaustive]
 #[allow(non_camel_case_types)]
 pub enum HashAlgorithm {
-    #[default]
     Unspecified = 0,
     /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
     Sha256 = 1,
@@ -253,21 +280,184 @@ pub enum HashAlgorithm {
     /// [FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)
     Sha3_512 = 12,
     /// Custom hash algorithm
+    #[num_enum(catch_all)]
     Custom(u8),
 }
 
-#[derive(Serde_list, Debug, Clone, PartialEq, Eq, Default)]
-pub struct NestedPart {
-    pub disposition: Disposition,
-    pub language: String, // TODO: Parse as Vec<LanguageTag> ?
-    #[externally_tagged]
-    pub part: NestedPartContent,
+impl_encode_decode_num_enum!(HashAlgorithm, u8);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NestedPart {
+    NullPart {
+        disposition: Disposition,
+        language: String, // TODO: Parse as Vec<LanguageTag> ?
+    },
+    SinglePart {
+        disposition: Disposition,
+        language: String, // TODO: Parse as Vec<LanguageTag> ?
+        content_type: String,
+        content: Vec<u8>,
+    },
+    ExternalPart {
+        disposition: Disposition,
+        language: String, // TODO: Parse as Vec<LanguageTag> ?
+        content_type: String,
+        url: String,
+        expires: u32,
+        size: u64,
+        enc_alg: EncryptionAlgorithm,
+        key: Vec<u8>,
+        nonce: Vec<u8>,
+        aad: Vec<u8>,
+        hash_alg: HashAlgorithm,
+        content_hash: Vec<u8>,
+        description: String,
+        filename: String,
+    },
+    MultiPart {
+        disposition: Disposition,
+        language: String, // TODO: Parse as Vec<LanguageTag> ?
+        part_semantics: PartSemantics,
+        parts: Vec<NestedPart>,
+    },
 }
 
-#[derive(Serde_custom, Debug, Clone, Copy, Eq, PartialEq, Default)]
+impl<C> minicbor::Encode<C> for NestedPart {
+    fn encode<W: minicbor::encode::Write>(
+        &self,
+        e: &mut minicbor::Encoder<W>,
+        _ctx: &mut C,
+    ) -> Result<(), minicbor::encode::Error<W::Error>> {
+        match self {
+            NestedPart::NullPart {
+                disposition,
+                language,
+            } => {
+                e.array(3)?.encode(disposition)?.str(language)?.u8(0)?;
+            }
+            NestedPart::SinglePart {
+                disposition,
+                language,
+                content_type,
+                content,
+            } => {
+                e.array(5)?
+                    .encode(disposition)?
+                    .str(language)?
+                    .u8(1)?
+                    .str(content_type)?
+                    .bytes(content)?;
+            }
+            NestedPart::ExternalPart {
+                disposition,
+                language,
+                content_type,
+                url,
+                expires,
+                size,
+                enc_alg,
+                key,
+                nonce,
+                aad,
+                hash_alg,
+                content_hash,
+                description,
+                filename,
+            } => {
+                e.array(15)?
+                    .encode(disposition)?
+                    .str(language)?
+                    .u8(2)?
+                    .str(content_type)?
+                    .str(url)?
+                    .u32(*expires)?
+                    .u64(*size)?
+                    .encode(enc_alg)?
+                    .bytes(key)?
+                    .bytes(nonce)?
+                    .bytes(aad)?
+                    .encode(hash_alg)?
+                    .bytes(content_hash)?
+                    .str(description)?
+                    .str(filename)?;
+            }
+            NestedPart::MultiPart {
+                disposition,
+                language,
+                part_semantics,
+                parts,
+            } => {
+                e.array(5)?
+                    .encode(disposition)?
+                    .str(language)?
+                    .u8(3)?
+                    .encode(part_semantics)?
+                    .encode(parts)?;
+            }
+        };
+
+        Ok(())
+    }
+}
+
+impl<C> minicbor::Decode<'_, C> for NestedPart {
+    fn decode(
+        d: &mut minicbor::Decoder<'_>,
+        _ctx: &mut C,
+    ) -> Result<Self, minicbor::decode::Error> {
+        let array = d.array()?.ok_or(minicbor::decode::Error::message(
+            "invalid array length for NestedPart",
+        ))?;
+        let disposition = d.decode()?;
+        let language = d.str()?.to_owned();
+        let discriminant = d.u8()?;
+        match (array, discriminant) {
+            (3, 0) => Ok(NestedPart::NullPart {
+                disposition,
+                language,
+            }),
+            (5, 1) => Ok(NestedPart::SinglePart {
+                disposition,
+                language,
+                content_type: d.str()?.to_owned(),
+                content: d.bytes()?.to_vec(),
+            }),
+            (15, 2) => Ok(NestedPart::ExternalPart {
+                disposition,
+                language,
+                content_type: d.str()?.to_owned(),
+                url: d.str()?.to_owned(),
+                expires: d.u32()?,
+                size: d.u64()?,
+                enc_alg: d.decode()?,
+                key: d.bytes()?.to_vec(),
+                nonce: d.bytes()?.to_vec(),
+                aad: d.bytes()?.to_vec(),
+                hash_alg: d.decode()?,
+                content_hash: d.bytes()?.to_vec(),
+                description: d.str()?.to_owned(),
+                filename: d.str()?.to_owned(),
+            }),
+            (5, 3) => {
+                let part_semantics = d.decode()?;
+                let parts = d.decode()?;
+                Ok(NestedPart::MultiPart {
+                    disposition,
+                    language,
+                    part_semantics,
+                    parts,
+                })
+            }
+            _ => Err(minicbor::decode::Error::message(
+                "invalid discriminant for NestedPart",
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 pub enum Disposition {
-    #[default]
     Unspecified = 0,
     Render = 1,
     Reaction = 2,
@@ -277,40 +467,20 @@ pub enum Disposition {
     Attachment = 6,
     Session = 7,
     Preview = 8,
+    #[num_enum(catch_all)]
     Custom(u8),
 }
 
-#[derive(ExternallyTagged, Debug, Clone, PartialEq, Eq, Default)]
-#[repr(u8)]
-#[allow(clippy::enum_variant_names)]
-pub enum NestedPartContent {
-    #[default]
-    NullPart = 0,
-    SinglePart {
-        content_type: String,
-        content: ByteBuf,
-    } = 1,
-    ExternalPart {
-        content_type: String,
-        url: String,
-        expires: u32,
-        size: u64,
-        enc_alg: EncryptionAlgorithm,
-        key: ByteBuf,
-        nonce: ByteBuf,
-        aad: ByteBuf,
-        hash_alg: HashAlgorithm,
-        content_hash: ByteBuf,
-        description: String,
-        filename: String,
-    } = 2,
-    MultiPart {
-        part_semantics: PartSemantics,
-        parts: Vec<NestedPart>,
-    } = 3,
-}
+// #[expect(clippy::derivable_impls, reason = "Does not work with num_enum derive")]
+// impl Default for Disposition {
+//     fn default() -> Self {
+//         Self::Unspecified
+//     }
+// }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Serde_custom)]
+impl_encode_decode_num_enum!(Disposition, u8);
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, IntoPrimitive, FromPrimitive)]
 #[repr(u16)]
 pub enum EncryptionAlgorithm {
     None = 0,
@@ -381,63 +551,69 @@ pub enum EncryptionAlgorithm {
     /// Reference: [draft-irtf-cfrg-aegis-aead-08](https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/08/)
     Aegis256 = 33,
     /// Unknown algorithm
+    #[num_enum(catch_all)]
     Custom(u16),
 }
 
-#[derive(Serde_custom, Debug, Clone, Copy, PartialEq, Eq)]
+impl_encode_decode_num_enum!(EncryptionAlgorithm, u16);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 pub enum PartSemantics {
     ChooseOne = 0,
     SingleUnit = 1,
     ProcessAll = 2,
+    #[num_enum(catch_all)]
     Custom(u8),
 }
+
+impl_encode_decode_num_enum!(PartSemantics, u8);
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::hex_decode;
+    use crate::{cbor, hex_decode};
 
     use super::*;
 
-    fn extensions_alice() -> BTreeMap<ExtensionName, ciborium::Value> {
+    fn extensions_alice() -> BTreeMap<ExtensionName, cbor::Value> {
         let mut extensions = BTreeMap::new();
         extensions.insert(
-            ExtensionName::Number(1.into()),
-            ciborium::Value::from("mimi://example.com/u/alice-smith"),
+            ExtensionName::Number(1),
+            "mimi://example.com/u/alice-smith".into(),
         );
         extensions.insert(
-            ExtensionName::Number(2.into()),
-            ciborium::Value::from("mimi://example.com/r/engineering_team"),
+            ExtensionName::Number(2),
+            "mimi://example.com/r/engineering_team".into(),
         );
 
         extensions
     }
 
-    fn extensions_bob() -> BTreeMap<ExtensionName, ciborium::Value> {
+    fn extensions_bob() -> BTreeMap<ExtensionName, cbor::Value> {
         let mut extensions = BTreeMap::new();
         extensions.insert(
-            ExtensionName::Number(1.into()),
-            ciborium::Value::from("mimi://example.com/u/bob-jones"),
+            ExtensionName::Number(1),
+            "mimi://example.com/u/bob-jones".into(),
         );
         extensions.insert(
-            ExtensionName::Number(2.into()),
-            ciborium::Value::from("mimi://example.com/r/engineering_team"),
+            ExtensionName::Number(2),
+            "mimi://example.com/r/engineering_team".into(),
         );
 
         extensions
     }
 
-    fn extensions_cathy() -> BTreeMap<ExtensionName, ciborium::Value> {
+    fn extensions_cathy() -> BTreeMap<ExtensionName, cbor::Value> {
         let mut extensions = BTreeMap::new();
         extensions.insert(
-            ExtensionName::Number(1.into()),
-            ciborium::Value::from("mimi://example.com/u/cathy-washington"),
+            ExtensionName::Number(1),
+            "mimi://example.com/u/cathy-washington".into(),
         );
         extensions.insert(
-            ExtensionName::Number(2.into()),
-            ciborium::Value::from("mimi://example.com/r/engineering_team"),
+            ExtensionName::Number(2),
+            "mimi://example.com/r/engineering_team".into(),
         );
 
         extensions
@@ -446,21 +622,17 @@ mod tests {
     #[test]
     fn original_message() {
         let value = MimiContent {
-            salt: ByteBuf::from(hex::decode("5eed9406c2545547ab6f09f20a18b003").unwrap()),
+            salt: hex::decode("5eed9406c2545547ab6f09f20a18b003").unwrap(),
             replaces: None,
-            topic_id: ByteBuf::from(b""),
+            topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: None,
             extensions: extensions_alice(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::SinglePart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part: NestedPartContent::SinglePart {
-                    content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
-                    content: ByteBuf::from(
-                        b"Hi everyone, we just shipped release 2.0. __Good  work__!",
-                    ),
-                },
+                content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
+                content: b"Hi everyone, we just shipped release 2.0. __Good  work__!".to_vec(),
             },
         };
 
@@ -530,23 +702,20 @@ mod tests {
     #[test]
     fn reply() {
         let value = MimiContent {
-            salt: ByteBuf::from(hex::decode("11a458c73b8dd2cf404db4b378b8fe4d").unwrap()),
+            salt: hex::decode("11a458c73b8dd2cf404db4b378b8fe4d").unwrap(),
             replaces: None,
-            topic_id: ByteBuf::from(b""),
+            topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: Some(
                 hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
             ),
             extensions: extensions_bob(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::SinglePart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part: NestedPartContent::SinglePart {
-                    content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
-                    content: ByteBuf::from(b"Right on! _Congratulations_ 'all!"),
-                },
+                content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
+                content: b"Right on! _Congratulations_ 'all!".to_vec(),
             },
         };
 
@@ -614,23 +783,20 @@ mod tests {
     #[test]
     fn reaction() {
         let value = MimiContent {
-            salt: ByteBuf::from(hex::decode("d37bc0e6a8b4f04e9e6382375f587bf6").unwrap()),
+            salt: hex::decode("d37bc0e6a8b4f04e9e6382375f587bf6").unwrap(),
             replaces: None,
-            topic_id: ByteBuf::from(b""),
+            topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: Some(
                 hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
             ),
             extensions: extensions_cathy(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::SinglePart {
                 disposition: Disposition::Reaction,
                 language: "".to_owned(),
-                part: NestedPartContent::SinglePart {
-                    content_type: "text/plain;charset=utf-8".to_owned(),
-                    content: ByteBuf::from("❤"),
-                },
+                content_type: "text/plain;charset=utf-8".to_owned(),
+                content: "❤".as_bytes().to_vec(),
             },
         };
 
@@ -696,27 +862,23 @@ mod tests {
     #[test]
     fn edit() {
         let value = MimiContent {
-            salt: ByteBuf::from(hex::decode("b8c2e6d8800ecf45df39be6c45f4c042").unwrap()),
+            salt: hex::decode("b8c2e6d8800ecf45df39be6c45f4c042").unwrap(),
             replaces: Some(
                 hex::decode(b"01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836")
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
             ),
-            topic_id: ByteBuf::from(b""),
+            topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: Some(
                 hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
             ),
             extensions: extensions_bob(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::SinglePart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part: NestedPartContent::SinglePart {
-                    content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
-                    content: ByteBuf::from(b"Right on! _Congratulations_ y'all!"),
-                },
+                content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
+                content: b"Right on! _Congratulations_ y'all!".to_vec(),
             },
         };
 
@@ -776,24 +938,21 @@ mod tests {
     #[test]
     fn delete() {
         let value = MimiContent {
-            salt: ByteBuf::from(hex::decode("0a590d73b2c7761c39168be5ebf7f2e6").unwrap()),
+            salt: hex::decode("0a590d73b2c7761c39168be5ebf7f2e6").unwrap(),
             replaces: Some(
                 hex::decode(b"01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836")
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
             ),
-            topic_id: ByteBuf::from(b""),
+            topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: Some(
                 hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
             ),
             extensions: extensions_bob(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::NullPart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part: NestedPartContent::NullPart,
             },
         };
 
@@ -849,20 +1008,18 @@ mod tests {
     #[test]
     fn expiring() {
         let value = MimiContent {
-            salt: ByteBuf::from(hex::decode("33be993eb39f418f9295afc2ae160d2d")
-                .unwrap()),
+            salt: hex::decode("33be993eb39f418f9295afc2ae160d2d")
+                .unwrap(),
             replaces: None,
-            topic_id: ByteBuf::from(b""),
+            topic_id: b"".to_vec(),
             expires: Some(Expiration { relative: false, time: 1644390004 }),
             in_reply_to: None,
             extensions: extensions_alice(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::SinglePart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part: NestedPartContent::SinglePart {
-                    content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
-                    content: ByteBuf::from(b"__*VPN GOING DOWN*__ I'm rebooting the VPN in ten minutes unless anyone objects."),
-                },
+                content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
+                content: b"__*VPN GOING DOWN*__ I'm rebooting the VPN in ten minutes unless anyone objects.".to_vec(),
             },
         };
 
@@ -935,35 +1092,30 @@ mod tests {
     #[test]
     fn attachments() {
         let value = MimiContent {
-            salt: ByteBuf::from(hex::decode("18fac6371e4e53f1aeaf8a013155c166").unwrap()),
+            salt: hex::decode("18fac6371e4e53f1aeaf8a013155c166").unwrap(),
             replaces: None,
-            topic_id: ByteBuf::from(b""),
+            topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: None,
             extensions: extensions_bob(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::ExternalPart {
                 disposition: Disposition::Attachment,
                 language: "en".to_owned(),
-                part: NestedPartContent::ExternalPart {
-                    content_type: "video/mp4".to_owned(),
-                    url: "https://example.com/storage/8ksB4bSrrRE.mp4".to_owned(),
-                    expires: 0,
-                    size: 708234961,
-                    enc_alg: EncryptionAlgorithm::Aes128Gcm,
-                    key: hex::decode("21399320958a6f4c745dde670d95e0d8")
-                        .unwrap()
-                        .into(),
-                    nonce: hex::decode("c86cf2c33f21527d1dd76f5b").unwrap().into(),
-                    aad: ByteBuf::from(b""),
-                    hash_alg: HashAlgorithm::Sha256,
-                    content_hash: hex::decode(
-                        "9ab17a8cf0890baaae7ee016c7312fcc080ba46498389458ee44f0276e783163",
-                    )
-                    .unwrap()
-                    .into(),
-                    description: "2 hours of key signing video".to_owned(),
-                    filename: "bigfile.mp4".to_owned(),
-                },
+                content_type: "video/mp4".to_owned(),
+                url: "https://example.com/storage/8ksB4bSrrRE.mp4".to_owned(),
+                expires: 0,
+                size: 708234961,
+                enc_alg: EncryptionAlgorithm::Aes128Gcm,
+                key: hex::decode("21399320958a6f4c745dde670d95e0d8").unwrap(),
+                nonce: hex::decode("c86cf2c33f21527d1dd76f5b").unwrap(),
+                aad: b"".to_vec(),
+                hash_alg: HashAlgorithm::Sha256,
+                content_hash: hex::decode(
+                    "9ab17a8cf0890baaae7ee016c7312fcc080ba46498389458ee44f0276e783163",
+                )
+                .unwrap(),
+                description: "2 hours of key signing video".to_owned(),
+                filename: "bigfile.mp4".to_owned(),
             },
         };
 
@@ -1047,29 +1199,27 @@ mod tests {
     #[test]
     fn conferencing() {
         let value = MimiContent {
-            salt: ByteBuf::from(hex::decode("678ac6cd54de049c3e9665cd212470fa").unwrap()),
+            salt: hex::decode("678ac6cd54de049c3e9665cd212470fa").unwrap(),
             replaces: None,
-            topic_id: ByteBuf::from(b"Foo 118"),
+            topic_id: b"Foo 118".to_vec(),
             expires: None,
             in_reply_to: None,
             extensions: extensions_alice(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::ExternalPart {
                 disposition: Disposition::Session,
                 language: "".to_owned(),
-                part: NestedPartContent::ExternalPart {
-                    content_type: "".to_owned(),
-                    url: "https://example.com/join/12345".to_owned(),
-                    expires: 0,
-                    size: 0,
-                    enc_alg: EncryptionAlgorithm::None,
-                    key: ByteBuf::new(),
-                    nonce: ByteBuf::new(),
-                    aad: ByteBuf::new(),
-                    hash_alg: HashAlgorithm::Unspecified,
-                    content_hash: ByteBuf::from(b""),
-                    description: "Join the Foo 118 conference".to_owned(),
-                    filename: "".to_owned(),
-                },
+                content_type: "".to_owned(),
+                url: "https://example.com/join/12345".to_owned(),
+                expires: 0,
+                size: 0,
+                enc_alg: EncryptionAlgorithm::None,
+                key: Vec::new(),
+                nonce: Vec::new(),
+                aad: Vec::new(),
+                hash_alg: HashAlgorithm::Unspecified,
+                content_hash: b"".to_vec(),
+                description: "Join the Foo 118 conference".to_owned(),
+                filename: "".to_owned(),
             },
         };
 
@@ -1151,39 +1301,30 @@ mod tests {
     #[test]
     fn multipart() {
         let value = MimiContent {
-            salt: ByteBuf::from(hex::decode("261c953e178af653fe3d42641b91d814").unwrap()),
+            salt: hex::decode("261c953e178af653fe3d42641b91d814").unwrap(),
             replaces: None,
-            topic_id: ByteBuf::from(b""),
+            topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: None,
             extensions: extensions_alice(),
-            nested_part: NestedPart {
+            nested_part: NestedPart::MultiPart {
                 disposition: Disposition::Render,
                 language: "".to_owned(),
-                part: NestedPartContent::MultiPart {
-                    part_semantics: PartSemantics::ChooseOne,
-                    parts: vec![
-                        NestedPart {
-                            disposition: Disposition::Render,
-                            language: "".to_owned(),
-                            part: NestedPartContent::SinglePart {
-                                content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
-                                content: ByteBuf::from(b"# Welcome!"),
-                            },
-                        },
-                        NestedPart {
-                            disposition: Disposition::Render,
-                            language: "".to_owned(),
-                            part: NestedPartContent::SinglePart {
-                                content_type: "application/vnd.examplevendor-fancy-im-message"
-                                    .to_owned(),
-                                content: hex::decode("dc861ebaa718fd7c3ca159f71a2001")
-                                    .unwrap()
-                                    .into(),
-                            },
-                        },
-                    ],
-                },
+                part_semantics: PartSemantics::ChooseOne,
+                parts: vec![
+                    NestedPart::SinglePart {
+                        disposition: Disposition::Render,
+                        language: "".to_owned(),
+                        content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
+                        content: b"# Welcome!".to_vec(),
+                    },
+                    NestedPart::SinglePart {
+                        disposition: Disposition::Render,
+                        language: "".to_owned(),
+                        content_type: "application/vnd.examplevendor-fancy-im-message".to_owned(),
+                        content: hex::decode("dc861ebaa718fd7c3ca159f71a2001").unwrap(),
+                    },
+                ],
             },
         };
 
@@ -1252,5 +1393,14 @@ mod tests {
         );
 
         assert_eq!(hex::encode(result), hex::encode(target));
+    }
+
+    #[test]
+    fn catch_all_hash_algorithm() {
+        let alg = HashAlgorithm::Custom(42);
+        let mut buf = Vec::new();
+        minicbor::encode(alg, &mut buf).unwrap();
+        let decoded_alg: HashAlgorithm = minicbor::decode(&buf).unwrap();
+        assert_eq!(alg, decoded_alg);
     }
 }

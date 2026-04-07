@@ -2,16 +2,9 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::io::Cursor;
+use num_enum::{FromPrimitive, IntoPrimitive};
 
-use serde::{
-    de::{self},
-    Deserialize, Serialize,
-};
-use serde_bytes::ByteBuf;
-use serde_list::{Serde_custom, Serde_list};
-
-use crate::{Error, Result};
+use crate::{impl_encode_decode_num_enum, Error, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageStatusReport {
@@ -20,74 +13,33 @@ pub struct MessageStatusReport {
 
 impl MessageStatusReport {
     pub fn serialize(&self) -> Result<Vec<u8>> {
-        let mut result = Vec::new();
-        ciborium::ser::into_writer(&self.statuses, &mut result)
-            .map_err(|_| Error::SerializationFailed)?;
-        Ok(result)
+        let mut buf = Vec::new();
+        minicbor::encode(&self.statuses, &mut buf).map_err(Error::Encode)?;
+        Ok(buf)
     }
 
     pub fn deserialize(input: &[u8]) -> Result<Self> {
         Ok(Self {
-            statuses: ciborium::de::from_reader(Cursor::new(input))
-                .map_err(|_| Error::DeserializationFailed)?,
+            statuses: minicbor::decode(input).map_err(Error::Decode)?,
         })
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Timestamp(pub u64);
+#[derive(Debug, Clone, PartialEq, Eq, minicbor_derive::Encode, minicbor_derive::Decode)]
+#[cbor(transparent)]
+pub struct Timestamp(#[cbor(tag(62))] pub u64);
 
-impl Serialize for Timestamp {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        ciborium::Value::Tag(
-            62,
-            Box::new(ciborium::Value::Integer(ciborium::value::Integer::from(
-                self.0,
-            ))),
-        )
-        .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Timestamp {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = ciborium::Value::deserialize(deserializer)?;
-        if let ciborium::Value::Tag(62, v) = value {
-            if let ciborium::Value::Integer(timestamp) = *v {
-                Ok(Timestamp(u64::try_from(timestamp).map_err(|_| {
-                    de::Error::invalid_value(
-                        de::Unexpected::Other(&i128::from(timestamp).to_string()),
-                        &"timestamp must fit in u64",
-                    )
-                })?))
-            } else {
-                Err(de::Error::invalid_type(
-                    de::Unexpected::StructVariant,
-                    &"Timestamp must be an integer",
-                ))
-            }
-        } else {
-            Err(de::Error::invalid_type(
-                de::Unexpected::StructVariant,
-                &"Timestamp must have tag 62",
-            ))
-        }
-    }
-}
-
-#[derive(Serde_list, Debug, Clone, PartialEq, Eq)]
+#[derive(minicbor_derive::Encode, minicbor_derive::Decode, Debug, Clone, PartialEq, Eq)]
+#[cbor(array)]
 pub struct PerMessageStatus {
-    pub mimi_id: ByteBuf,
+    #[cbor(n(0))]
+    #[cbor(with = "minicbor::bytes")]
+    pub mimi_id: Vec<u8>,
+    #[cbor(n(1))]
     pub status: MessageStatus,
 }
 
-#[derive(Serde_custom, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 pub enum MessageStatus {
     Unread = 0,
@@ -97,8 +49,11 @@ pub enum MessageStatus {
     Deleted = 4,
     Hidden = 5,
     Error = 6,
+    #[num_enum(catch_all)]
     Custom(u8),
 }
+
+impl_encode_decode_num_enum!(MessageStatus, u8);
 
 #[cfg(test)]
 mod tests {
@@ -112,32 +67,28 @@ mod tests {
                     mimi_id: hex::decode(
                         b"010714238126772e253118df3cd18fa69f90841d7df1f6f0cddab1f0dc0c9a26",
                     )
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
                     status: MessageStatus::Read,
                 },
                 PerMessageStatus {
                     mimi_id: hex::decode(
                         b"01efab9eca8374d3618a16b39c658689fd90d07fe666a846178cb4965c94a8bf",
                     )
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
                     status: MessageStatus::Read,
                 },
                 PerMessageStatus {
                     mimi_id: hex::decode(
                         b"0103d50d4980c0a7a0990f65534ebd4f0fa36b1f4680d6e080c19ea4a95def7b",
                     )
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
                     status: MessageStatus::Unread,
                 },
                 PerMessageStatus {
                     mimi_id: hex::decode(
                         b"0114e486b39d705e15e3000b57290de479affbda4ec2c1b17cc25c214229ed7d",
                     )
-                    .unwrap()
-                    .into(),
+                    .unwrap(),
                     status: MessageStatus::Expired,
                 },
             ],

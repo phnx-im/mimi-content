@@ -2,20 +2,25 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-[workspace]
-members = ["serde_list", "serde_list/serde_list_macros"]
-
 [package]
 name = "mimi_content"
+authors = ["Phoenix R&D GmbH <hello@phnx.im>"]
 version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 
 [dependencies]
-ciborium = "0.2.2"
-hex = "0.4.3"
-serde = { version = "1.0.215", features = ["derive"] }
-serde_bytes = "0.11.15"
-serde_list = { path = "./serde_list" }
+minicbor = { version = "2.2.1", features = ["std", "derive"] }
+minicbor-derive = { version = "0.19" }
 sha2 = "0.10.9"
 thiserror = "2.0.11"
+num_enum = "0.7.6"
+
+[[bench]]
+name = "codec"
+harness = false
+
+[dev-dependencies]
+criterion = "0.5.1"
+mimi_content_ciborium = { git = "https://github.com/phnx-im/mimi-content.git", rev = "9189ef0b350576e6edd130e43d281c8eb9bfe452", package = "mimi_content" }
+hex = "0.4.3"

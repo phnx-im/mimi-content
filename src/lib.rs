@@ -1,15 +1,14 @@
 // SPDX-FileCopyrightText: 2024 Phoenix R&D GmbH <hello@phnx.im>
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
-
+#[deny(warnings)]
+pub mod cbor;
 pub mod content_container;
 mod message_status;
+pub(crate) mod util;
 
-pub use content_container::{
-    Disposition, Error, Expiration, MimiContent, NestedPart, NestedPartContent, Result,
-};
+pub use content_container::{Error, MimiContent, Result};
 pub use message_status::{MessageStatus, MessageStatusReport, PerMessageStatus, Timestamp};
-pub use serde_bytes::ByteBuf;
 
 #[cfg(test)]
 fn hex_decode(input: &str) -> Vec<u8> {
