@@ -14,13 +14,13 @@ pub struct MessageStatusReport {
 impl MessageStatusReport {
     pub fn serialize(&self) -> Result<Vec<u8>> {
         let mut buf = Vec::new();
-        minicbor::encode(&self.statuses, &mut buf).map_err(Error::SerializationFailed)?;
+        minicbor::encode(&self.statuses, &mut buf).map_err(Error::Encode)?;
         Ok(buf)
     }
 
     pub fn deserialize(input: &[u8]) -> Result<Self> {
         Ok(Self {
-            statuses: minicbor::decode(input).map_err(Error::DeserializationFailed)?,
+            statuses: minicbor::decode(input).map_err(Error::Decode)?,
         })
     }
 }

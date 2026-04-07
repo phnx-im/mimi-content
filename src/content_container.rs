@@ -12,15 +12,16 @@ use crate::{
 };
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("unsupported content type")]
     UnsupportedContentType,
     #[error("not UTF-8")]
     NotUtf8,
-    #[error("serialization failed")]
-    SerializationFailed(minicbor::encode::Error<Infallible>),
-    #[error("deserialization failed")]
-    DeserializationFailed(minicbor::decode::Error),
+    #[error("encoding failed: {0}")]
+    Encode(minicbor::encode::Error<Infallible>),
+    #[error("decoding failed: {0}")]
+    Decode(minicbor::decode::Error),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -191,12 +192,12 @@ impl MimiContent {
 
     pub fn serialize(&self) -> Result<Vec<u8>> {
         let mut buf = Vec::new();
-        minicbor::encode(self, &mut buf).map_err(Error::SerializationFailed)?;
+        minicbor::encode(self, &mut buf).map_err(Error::Encode)?;
         Ok(buf)
     }
 
     pub fn deserialize(input: &[u8]) -> Result<Self> {
-        minicbor::decode(input).map_err(Error::DeserializationFailed)
+        minicbor::decode(input).map_err(Error::Decode)
     }
 }
 

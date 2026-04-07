@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Phoenix R&D GmbH <hello@phnx.im>
+//
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /// Implement `minicbor::Encode` and `minicbor::Decode` for an enum that implements
 /// `num_enum::IntoPrimitive` and `num_from::FromPrimitive`.
 #[macro_export]
