@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::{Error, Result};
+use num_enum::{FromPrimitive, IntoPrimitive};
+
+use crate::{impl_encode_decode_num_enum, Error, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageStatusReport {
@@ -37,9 +39,7 @@ pub struct PerMessageStatus {
     pub status: MessageStatus,
 }
 
-#[derive(
-    minicbor_custom_enum::Encode, minicbor_custom_enum::Decode, Debug, Clone, Copy, PartialEq, Eq,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 pub enum MessageStatus {
     Unread = 0,
@@ -49,8 +49,11 @@ pub enum MessageStatus {
     Deleted = 4,
     Hidden = 5,
     Error = 6,
+    #[num_enum(catch_all)]
     Custom(u8),
 }
+
+impl_encode_decode_num_enum!(MessageStatus, u8);
 
 #[cfg(test)]
 mod tests {

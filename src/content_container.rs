@@ -3,10 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use minicbor::bytes::ByteVec;
+use num_enum::{FromPrimitive, IntoPrimitive};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, convert::Infallible};
 
-use crate::{cbor, MessageStatus, MessageStatusReport, PerMessageStatus};
+use crate::{
+    cbor, impl_encode_decode_num_enum, MessageStatus, MessageStatusReport, PerMessageStatus,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -54,7 +57,7 @@ impl Default for MimiContentV1 {
             last_seen: Vec::new(),
             extensions: BTreeMap::new(),
             nested_part: NestedPart::NullPart {
-                disposition: Disposition::default(),
+                disposition: Disposition::Unspecified,
                 language: String::new(),
             },
         }
@@ -245,21 +248,11 @@ pub struct Expiration {
 /// See [Named Information Hash Algorithm Registry].
 ///
 /// [Named Information Hash Algorithm Registry]: https://www.iana.org/assignments/named-information/named-information.xhtml
-#[derive(
-    minicbor_custom_enum::Encode,
-    minicbor_custom_enum::Decode,
-    Debug,
-    Clone,
-    Copy,
-    Eq,
-    PartialEq,
-    Default,
-)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 #[non_exhaustive]
 #[allow(non_camel_case_types)]
 pub enum HashAlgorithm {
-    #[default]
     Unspecified = 0,
     /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
     Sha256 = 1,
@@ -286,8 +279,11 @@ pub enum HashAlgorithm {
     /// [FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)
     Sha3_512 = 12,
     /// Custom hash algorithm
+    #[num_enum(catch_all)]
     Custom(u8),
 }
+
+impl_encode_decode_num_enum!(HashAlgorithm, u8);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NestedPart {
@@ -458,34 +454,32 @@ impl<C> minicbor::Decode<'_, C> for NestedPart {
     }
 }
 
-#[derive(
-    minicbor_custom_enum::Encode,
-    minicbor_custom_enum::Decode,
-    Debug,
-    Clone,
-    Copy,
-    Eq,
-    PartialEq,
-    Default,
-)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 pub enum Disposition {
-    #[default]
-    Unspecified,
-    Render,
-    Reaction,
-    Profile,
-    Inline,
-    Icon,
-    Attachment,
-    Session,
-    Preview,
+    Unspecified = 0,
+    Render = 1,
+    Reaction = 2,
+    Profile = 3,
+    Inline = 4,
+    Icon = 5,
+    Attachment = 6,
+    Session = 7,
+    Preview = 8,
+    #[num_enum(catch_all)]
     Custom(u8),
 }
 
-#[derive(
-    minicbor_custom_enum::Encode, minicbor_custom_enum::Decode, Debug, PartialEq, Eq, Clone, Copy,
-)]
+// #[expect(clippy::derivable_impls, reason = "Does not work with num_enum derive")]
+// impl Default for Disposition {
+//     fn default() -> Self {
+//         Self::Unspecified
+//     }
+// }
+
+impl_encode_decode_num_enum!(Disposition, u8);
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, IntoPrimitive, FromPrimitive)]
 #[repr(u16)]
 pub enum EncryptionAlgorithm {
     None = 0,
@@ -556,19 +550,23 @@ pub enum EncryptionAlgorithm {
     /// Reference: [draft-irtf-cfrg-aegis-aead-08](https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/08/)
     Aegis256 = 33,
     /// Unknown algorithm
+    #[num_enum(catch_all)]
     Custom(u16),
 }
 
-#[derive(
-    minicbor_custom_enum::Encode, minicbor_custom_enum::Decode, Debug, Clone, Copy, PartialEq, Eq,
-)]
+impl_encode_decode_num_enum!(EncryptionAlgorithm, u16);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 pub enum PartSemantics {
     ChooseOne = 0,
     SingleUnit = 1,
     ProcessAll = 2,
+    #[num_enum(catch_all)]
     Custom(u8),
 }
+
+impl_encode_decode_num_enum!(PartSemantics, u8);
 
 #[cfg(test)]
 mod tests {
@@ -1394,5 +1392,14 @@ mod tests {
         );
 
         assert_eq!(hex::encode(result), hex::encode(target));
+    }
+
+    #[test]
+    fn catch_all_hash_algorithm() {
+        let alg = HashAlgorithm::Custom(42);
+        let mut buf = Vec::new();
+        minicbor::encode(alg, &mut buf).unwrap();
+        let decoded_alg: HashAlgorithm = minicbor::decode(&buf).unwrap();
+        assert_eq!(alg, decoded_alg);
     }
 }

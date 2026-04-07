@@ -2,9 +2,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-[workspace]
-members = ["minicbor-custom-enum"]
-
 [package]
 name = "mimi_content"
 authors = ["Phoenix R&D GmbH <hello@phnx.im>"]
@@ -15,10 +12,10 @@ license = "AGPL-3.0-or-later"
 [dependencies]
 minicbor = { version = "2.2.1", features = ["std", "derive"] }
 minicbor-derive = { version = "0.19" }
-minicbor-custom-enum = { path = "./minicbor-custom-enum" }
 hex = "0.4.3"
 sha2 = "0.10.9"
 thiserror = "2.0.11"
+num_enum = "0.7.6"
 
 [[bench]]
 name = "codec"
