@@ -37,55 +37,19 @@ pub struct PerMessageStatus {
     pub status: MessageStatus,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    minicbor_custom_enum::Encode, minicbor_custom_enum::Decode, Debug, Clone, Copy, PartialEq, Eq,
+)]
 #[repr(u8)]
 pub enum MessageStatus {
-    Unread,
-    Delivered,
-    Read,
-    Expired,
-    Deleted,
-    Hidden,
-    Error,
+    Unread = 0,
+    Delivered = 1,
+    Read = 2,
+    Expired = 3,
+    Deleted = 4,
+    Hidden = 5,
+    Error = 6,
     Custom(u8),
-}
-
-impl<C> minicbor::Encode<C> for MessageStatus {
-    fn encode<W: minicbor::encode::Write>(
-        &self,
-        e: &mut minicbor::Encoder<W>,
-        _ctx: &mut C,
-    ) -> Result<(), minicbor::encode::Error<W::Error>> {
-        e.u8(match self {
-            MessageStatus::Unread => 0,
-            MessageStatus::Delivered => 1,
-            MessageStatus::Read => 2,
-            MessageStatus::Expired => 3,
-            MessageStatus::Deleted => 4,
-            MessageStatus::Hidden => 5,
-            MessageStatus::Error => 6,
-            MessageStatus::Custom(custom_status) => *custom_status,
-        })?;
-        Ok(())
-    }
-}
-
-impl<C> minicbor::Decode<'_, C> for MessageStatus {
-    fn decode(
-        d: &mut minicbor::Decoder<'_>,
-        _ctx: &mut C,
-    ) -> Result<Self, minicbor::decode::Error> {
-        Ok(match d.u8()? {
-            0 => MessageStatus::Unread,
-            1 => MessageStatus::Delivered,
-            2 => MessageStatus::Read,
-            3 => MessageStatus::Expired,
-            4 => MessageStatus::Deleted,
-            5 => MessageStatus::Hidden,
-            6 => MessageStatus::Error,
-            custom_status => MessageStatus::Custom(custom_status),
-        })
-    }
 }
 
 #[cfg(test)]

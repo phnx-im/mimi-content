@@ -297,9 +297,24 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "hex",
+ "mimi_content 0.1.0 (git+https://github.com/phnx-im/mimi-content.git?rev=9189ef0b350576e6edd130e43d281c8eb9bfe452)",
  "minicbor",
  "minicbor-custom-enum",
  "minicbor-derive",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
+name = "mimi_content"
+version = "0.1.0"
+source = "git+https://github.com/phnx-im/mimi-content.git?rev=9189ef0b350576e6edd130e43d281c8eb9bfe452#9189ef0b350576e6edd130e43d281c8eb9bfe452"
+dependencies = [
+ "ciborium",
+ "hex",
+ "serde",
+ "serde_bytes",
+ "serde_list",
  "sha2",
  "thiserror",
 ]
@@ -475,6 +490,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_bytes"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -505,6 +530,24 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_list"
+version = "1.1.0"
+source = "git+https://github.com/phnx-im/mimi-content.git?rev=9189ef0b350576e6edd130e43d281c8eb9bfe452#9189ef0b350576e6edd130e43d281c8eb9bfe452"
+dependencies = [
+ "serde",
+ "serde_list_macros",
+]
+
+[[package]]
+name = "serde_list_macros"
+version = "0.1.0"
+source = "git+https://github.com/phnx-im/mimi-content.git?rev=9189ef0b350576e6edd130e43d281c8eb9bfe452#9189ef0b350576e6edd130e43d281c8eb9bfe452"
+dependencies = [
+ "quote",
+ "syn",
 ]
 
 [[package]]
