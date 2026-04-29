@@ -9,18 +9,24 @@ version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 
+[features]
+serde = ["dep:serde", "serde_bytes"]
+
 [dependencies]
 minicbor = { version = "2.2.1", features = ["std", "derive"] }
 minicbor-derive = { version = "0.19" }
 sha2 = "0.10.9"
 thiserror = "2.0.11"
 num_enum = "0.7.6"
+serde = { version = "1.0.228", optional = true }
+serde_bytes = { version = "0.11.19", optional = true }
 
 [[bench]]
 name = "codec"
 harness = false
 
 [dev-dependencies]
-criterion = "0.5.1"
-mimi_content_ciborium = { git = "https://github.com/phnx-im/mimi-content.git", rev = "9189ef0b350576e6edd130e43d281c8eb9bfe452", package = "mimi_content" }
+ciborium = "0.2.2"
+criterion = "0.8.2"
 hex = "0.4.3"
+minicbor-serde = { version = "0.6.2", features = ["std"] }
