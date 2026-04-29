@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use std::{collections::BTreeMap, hint::black_box, io::Cursor};
+use std::{collections::BTreeMap, hint::black_box};
 
 fn minicbor_mimi_content() -> mimi_content::MimiContent {
     use mimi_content::content_container::{
@@ -83,10 +83,7 @@ fn large_mimi_content() -> mimi_content::MimiContent {
 
 fn criterion_benchmark(c: &mut Criterion) {
     let content = minicbor_mimi_content();
-    let minicbor_content_bytes = content.serialize().unwrap();
-
-    let mut ciborium_multipart_bytes = Vec::new();
-    ciborium::into_writer(&content, &mut ciborium_multipart_bytes).unwrap();
+    let content_bytes = content.serialize().unwrap();
 
     let mut encode = c.benchmark_group("encode");
     encode.bench_function("minicbor-encode", |b| {
@@ -94,11 +91,13 @@ fn criterion_benchmark(c: &mut Criterion) {
             black_box(content.serialize().unwrap());
         });
     });
+    #[cfg(feature = "serde")]
     encode.bench_function("minicbor-serde-encode", |b| {
         b.iter(|| {
             black_box(minicbor_serde::to_vec(&content).unwrap());
         });
     });
+    #[cfg(feature = "serde")]
     encode.bench_function("ciborium-encode", |b| {
         b.iter(|| {
             let mut ciborium_bytes = Vec::new();
@@ -109,17 +108,17 @@ fn criterion_benchmark(c: &mut Criterion) {
     encode.finish();
 
     let large_content = large_mimi_content();
-    let large_minicbor_bytes = large_content.serialize().unwrap();
-    let mut large_ciborium_bytes = Vec::new();
-    ciborium::into_writer(&large_content, &mut large_ciborium_bytes).unwrap();
+    let large_content_bytes = large_content.serialize().unwrap();
 
     let mut encode_large = c.benchmark_group("encode-large");
     encode_large.bench_function("minicbor-encode", |b| {
         b.iter(|| black_box(large_content.serialize().unwrap()));
     });
+    #[cfg(feature = "serde")]
     encode_large.bench_function("minicbor-serde-encode", |b| {
         b.iter(|| black_box(minicbor_serde::to_vec(&large_content).unwrap()));
     });
+    #[cfg(feature = "serde")]
     encode_large.bench_function("ciborium-encode", |b| {
         b.iter(|| {
             let mut bytes = Vec::new();
@@ -131,21 +130,25 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     let mut decode_large = c.benchmark_group("decode-large");
     decode_large.bench_function("minicbor-decode", |b| {
-        b.iter(|| black_box(mimi_content::MimiContent::deserialize(&large_minicbor_bytes).unwrap()));
+        b.iter(|| black_box(mimi_content::MimiContent::deserialize(&large_content_bytes).unwrap()));
     });
+    #[cfg(feature = "serde")]
     decode_large.bench_function("minicbor-serde-decode", |b| {
         b.iter(|| {
             black_box(
-                minicbor_serde::from_slice::<mimi_content::MimiContent>(&large_minicbor_bytes)
+                minicbor_serde::from_slice::<mimi_content::MimiContent>(&large_content_bytes)
                     .unwrap(),
             )
         });
     });
+    #[cfg(feature = "serde")]
     decode_large.bench_function("ciborium-decode", |b| {
         b.iter(|| {
+            use std::io::Cursor;
+
             black_box(
                 ciborium::from_reader::<mimi_content::MimiContent, _>(Cursor::new(
-                    &large_ciborium_bytes,
+                    &large_content_bytes,
                 ))
                 .unwrap(),
             )
@@ -156,24 +159,25 @@ fn criterion_benchmark(c: &mut Criterion) {
     let mut decode = c.benchmark_group("decode");
     decode.bench_function("minicbor-decode", |b| {
         b.iter(|| {
-            black_box(mimi_content::MimiContent::deserialize(&minicbor_content_bytes).unwrap());
+            black_box(mimi_content::MimiContent::deserialize(&content_bytes).unwrap());
         });
     });
+    #[cfg(feature = "serde")]
     decode.bench_function("minicbor-serde-decode", |b| {
         b.iter(|| {
             black_box(
-                minicbor_serde::from_slice::<mimi_content::MimiContent>(&minicbor_content_bytes)
-                    .unwrap(),
+                minicbor_serde::from_slice::<mimi_content::MimiContent>(&content_bytes).unwrap(),
             );
         });
     });
+    #[cfg(feature = "serde")]
     decode.bench_function("ciborium-decode", |b| {
         b.iter(|| {
+            use std::io::Cursor;
+
             black_box(
-                ciborium::from_reader::<mimi_content::MimiContent, _>(Cursor::new(
-                    &ciborium_multipart_bytes,
-                ))
-                .unwrap(),
+                ciborium::from_reader::<mimi_content::MimiContent, _>(Cursor::new(&content_bytes))
+                    .unwrap(),
             );
         })
     });
