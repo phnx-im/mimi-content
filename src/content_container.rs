@@ -286,12 +286,6 @@ pub enum HashAlgorithm {
 
 impl_encode_decode_num_enum!(HashAlgorithm, u8);
 
-impl Default for HashAlgorithm {
-    fn default() -> Self {
-        Self::Unspecified
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NestedPart {
     NullPart {
@@ -514,12 +508,6 @@ pub enum Disposition {
 }
 
 impl_encode_decode_num_enum!(Disposition, u8);
-
-impl Default for Disposition {
-    fn default() -> Self {
-        Self::Unspecified
-    }
-}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, IntoPrimitive, FromPrimitive)]
 #[repr(u16)]
