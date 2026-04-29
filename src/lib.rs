@@ -7,7 +7,7 @@ pub mod content_container;
 mod message_status;
 pub(crate) mod util;
 
-pub use content_container::{Error, MimiContent, Result};
+pub use content_container::{Disposition, Error, MimiContent, NestedPart, Result};
 pub use message_status::{MessageStatus, MessageStatusReport, PerMessageStatus, Timestamp};
 
 #[cfg(test)]

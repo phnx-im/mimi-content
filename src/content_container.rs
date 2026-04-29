@@ -79,7 +79,7 @@ impl MimiContentV1 {
     }
 }
 
-#[derive(minicbor_derive::Encode, minicbor_derive::Decode, PartialEq, Debug, Clone)]
+#[derive(minicbor_derive::Encode, minicbor_derive::Decode, Default, PartialEq, Debug, Clone)]
 #[cbor(array)]
 pub struct MimiContent {
     #[cbor(n(0))]
@@ -286,6 +286,12 @@ pub enum HashAlgorithm {
 
 impl_encode_decode_num_enum!(HashAlgorithm, u8);
 
+impl Default for HashAlgorithm {
+    fn default() -> Self {
+        Self::Unspecified
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NestedPart {
     NullPart {
@@ -320,6 +326,26 @@ pub enum NestedPart {
         part_semantics: PartSemantics,
         parts: Vec<NestedPart>,
     },
+}
+
+impl Default for NestedPart {
+    fn default() -> Self {
+        Self::NullPart {
+            disposition: Disposition::Unspecified,
+            language: String::new(),
+        }
+    }
+}
+
+impl NestedPart {
+    pub fn disposition(&self) -> Disposition {
+        match self {
+            NestedPart::NullPart { disposition, .. } => *disposition,
+            NestedPart::SinglePart { disposition, .. } => *disposition,
+            NestedPart::ExternalPart { disposition, .. } => *disposition,
+            NestedPart::MultiPart { disposition, .. } => *disposition,
+        }
+    }
 }
 
 impl<C> minicbor::Encode<C> for NestedPart {
@@ -471,14 +497,13 @@ pub enum Disposition {
     Custom(u8),
 }
 
-// #[expect(clippy::derivable_impls, reason = "Does not work with num_enum derive")]
-// impl Default for Disposition {
-//     fn default() -> Self {
-//         Self::Unspecified
-//     }
-// }
-
 impl_encode_decode_num_enum!(Disposition, u8);
+
+impl Default for Disposition {
+    fn default() -> Self {
+        Self::Unspecified
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, IntoPrimitive, FromPrimitive)]
 #[repr(u16)]
