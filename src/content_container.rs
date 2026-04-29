@@ -471,13 +471,6 @@ pub enum Disposition {
     Custom(u8),
 }
 
-// #[expect(clippy::derivable_impls, reason = "Does not work with num_enum derive")]
-// impl Default for Disposition {
-//     fn default() -> Self {
-//         Self::Unspecified
-//     }
-// }
-
 impl_encode_decode_num_enum!(Disposition, u8);
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, IntoPrimitive, FromPrimitive)]
@@ -1393,6 +1386,51 @@ mod tests {
         );
 
         assert_eq!(hex::encode(result), hex::encode(target));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn multipart_minicbor_serde_compat() {
+        let value = MimiContent {
+            salt: hex::decode("261c953e178af653fe3d42641b91d814").unwrap(),
+            replaces: None,
+            topic_id: b"".to_vec(),
+            expires: None,
+            in_reply_to: None,
+            extensions: extensions_alice(),
+            nested_part: NestedPart::MultiPart {
+                disposition: Disposition::Render,
+                language: "".to_owned(),
+                part_semantics: PartSemantics::ChooseOne,
+                parts: vec![
+                    NestedPart::SinglePart {
+                        disposition: Disposition::Render,
+                        language: "".to_owned(),
+                        content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
+                        content: b"# Welcome!".to_vec(),
+                    },
+                    NestedPart::SinglePart {
+                        disposition: Disposition::Render,
+                        language: "".to_owned(),
+                        content_type: "application/vnd.examplevendor-fancy-im-message".to_owned(),
+                        content: hex::decode("dc861ebaa718fd7c3ca159f71a2001").unwrap(),
+                    },
+                ],
+            },
+        };
+
+        let minicbor_bytes = value.serialize().unwrap();
+        let minicbor_serde_bytes = minicbor_serde::to_vec(&value).unwrap();
+
+        assert_eq!(
+            hex::encode(&minicbor_bytes),
+            hex::encode(&minicbor_serde_bytes)
+        );
+
+        let minicbor_content: MimiContent = MimiContent::deserialize(&minicbor_bytes).unwrap();
+        let minicbor_serde_content: MimiContent =
+            minicbor_serde::from_slice(&minicbor_serde_bytes).unwrap();
+        assert_eq!(minicbor_content, minicbor_serde_content);
     }
 
     #[test]
