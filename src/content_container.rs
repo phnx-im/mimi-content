@@ -286,6 +286,7 @@ pub enum HashAlgorithm {
 
 impl_encode_decode_num_enum!(HashAlgorithm, u8);
 
+#[allow(clippy::derivable_impls)]
 impl Default for HashAlgorithm {
     fn default() -> Self {
         Self::Unspecified
