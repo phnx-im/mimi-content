@@ -346,6 +346,22 @@ impl NestedPart {
             NestedPart::MultiPart { disposition, .. } => *disposition,
         }
     }
+
+    pub fn is_null_part(&self) -> bool {
+        matches!(self, NestedPart::NullPart { .. })
+    }
+
+    pub fn is_single_part(&self) -> bool {
+        matches!(self, NestedPart::SinglePart { .. })
+    }
+
+    pub fn is_external_part(&self) -> bool {
+        matches!(self, NestedPart::ExternalPart { .. })
+    }
+
+    pub fn is_multi_part(&self) -> bool {
+        matches!(self, NestedPart::MultiPart { .. })
+    }
 }
 
 impl<C> minicbor::Encode<C> for NestedPart {
