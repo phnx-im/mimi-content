@@ -79,7 +79,7 @@ impl MimiContentV1 {
     }
 }
 
-#[derive(minicbor_derive::Encode, minicbor_derive::Decode, PartialEq, Debug, Clone)]
+#[derive(minicbor_derive::Encode, minicbor_derive::Decode, Default, PartialEq, Debug, Clone)]
 #[cbor(array)]
 pub struct MimiContent {
     #[cbor(n(0))]
@@ -286,6 +286,13 @@ pub enum HashAlgorithm {
 
 impl_encode_decode_num_enum!(HashAlgorithm, u8);
 
+#[allow(clippy::derivable_impls)]
+impl Default for HashAlgorithm {
+    fn default() -> Self {
+        Self::Unspecified
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NestedPart {
     NullPart {
@@ -320,6 +327,42 @@ pub enum NestedPart {
         part_semantics: PartSemantics,
         parts: Vec<NestedPart>,
     },
+}
+
+impl Default for NestedPart {
+    fn default() -> Self {
+        Self::NullPart {
+            disposition: Disposition::Unspecified,
+            language: String::new(),
+        }
+    }
+}
+
+impl NestedPart {
+    pub fn disposition(&self) -> Disposition {
+        match self {
+            NestedPart::NullPart { disposition, .. } => *disposition,
+            NestedPart::SinglePart { disposition, .. } => *disposition,
+            NestedPart::ExternalPart { disposition, .. } => *disposition,
+            NestedPart::MultiPart { disposition, .. } => *disposition,
+        }
+    }
+
+    pub fn is_null_part(&self) -> bool {
+        matches!(self, NestedPart::NullPart { .. })
+    }
+
+    pub fn is_single_part(&self) -> bool {
+        matches!(self, NestedPart::SinglePart { .. })
+    }
+
+    pub fn is_external_part(&self) -> bool {
+        matches!(self, NestedPart::ExternalPart { .. })
+    }
+
+    pub fn is_multi_part(&self) -> bool {
+        matches!(self, NestedPart::MultiPart { .. })
+    }
 }
 
 impl<C> minicbor::Encode<C> for NestedPart {
