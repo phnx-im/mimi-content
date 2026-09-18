@@ -125,7 +125,7 @@ impl Serialize for ExtensionName {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             ExtensionName::Text(s) => serializer.serialize_str(s),
-            ExtensionName::Number(n) => serializer.serialize_u64(*n),
+            ExtensionName::Number(n) => serializer.serialize_i64(*n),
         }
     }
 }
@@ -138,20 +138,34 @@ impl<'de> Deserialize<'de> for ExtensionName {
             type Value = ExtensionName;
 
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("a string or unsigned integer")
+                f.write_str("a string or integer")
             }
 
+            fn visit_i8<E: de::Error>(self, v: i8) -> Result<ExtensionName, E> {
+                Ok(ExtensionName::Number(v as i64))
+            }
+            fn visit_i16<E: de::Error>(self, v: i16) -> Result<ExtensionName, E> {
+                Ok(ExtensionName::Number(v as i64))
+            }
+            fn visit_i32<E: de::Error>(self, v: i32) -> Result<ExtensionName, E> {
+                Ok(ExtensionName::Number(v as i64))
+            }
+            fn visit_i64<E: de::Error>(self, v: i64) -> Result<ExtensionName, E> {
+                Ok(ExtensionName::Number(v))
+            }
             fn visit_u8<E: de::Error>(self, v: u8) -> Result<ExtensionName, E> {
-                Ok(ExtensionName::Number(v as u64))
+                Ok(ExtensionName::Number(v as i64))
             }
             fn visit_u16<E: de::Error>(self, v: u16) -> Result<ExtensionName, E> {
-                Ok(ExtensionName::Number(v as u64))
+                Ok(ExtensionName::Number(v as i64))
             }
             fn visit_u32<E: de::Error>(self, v: u32) -> Result<ExtensionName, E> {
-                Ok(ExtensionName::Number(v as u64))
+                Ok(ExtensionName::Number(v as i64))
             }
             fn visit_u64<E: de::Error>(self, v: u64) -> Result<ExtensionName, E> {
-                Ok(ExtensionName::Number(v))
+                let number = i64::try_from(v)
+                    .map_err(|_| de::Error::invalid_value(de::Unexpected::Unsigned(v), &self))?;
+                Ok(ExtensionName::Number(number))
             }
             fn visit_str<E: de::Error>(self, v: &str) -> Result<ExtensionName, E> {
                 Ok(ExtensionName::Text(v.to_owned()))

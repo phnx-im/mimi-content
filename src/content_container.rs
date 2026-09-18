@@ -2,13 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use minicbor::bytes::ByteVec;
+use minicbor::{bytes::ByteVec, data::Type};
 use num_enum::{FromPrimitive, IntoPrimitive};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, convert::Infallible};
 
 use crate::{
-    cbor, impl_encode_decode_num_enum, MessageStatus, MessageStatusReport, PerMessageStatus,
+    cbor, impl_encode_decode_num_enum, util::decode_text, MessageStatus, MessageStatusReport,
+    PerMessageStatus,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -204,7 +205,7 @@ impl MimiContent {
 #[derive(PartialEq, Eq, Debug, Clone, PartialOrd, Ord)]
 pub enum ExtensionName {
     Text(String),
-    Number(u64),
+    Number(i64),
 }
 
 impl<C> minicbor::Encode<C> for ExtensionName {
@@ -215,7 +216,7 @@ impl<C> minicbor::Encode<C> for ExtensionName {
     ) -> Result<(), minicbor::encode::Error<W::Error>> {
         match self {
             ExtensionName::Text(text) => e.str(text),
-            ExtensionName::Number(integer) => e.u64(*integer),
+            ExtensionName::Number(integer) => e.i64(*integer),
         }?;
         Ok(())
     }
@@ -226,11 +227,18 @@ impl<C> minicbor::Decode<'_, C> for ExtensionName {
         d: &mut minicbor::Decoder<'_>,
         _ctx: &mut C,
     ) -> Result<Self, minicbor::decode::Error> {
-        if let Ok(numerical_value) = d.u64() {
-            Ok(Self::Number(numerical_value))
-        } else {
-            let text_value = d.str()?;
-            Ok(Self::Text(text_value.to_owned()))
+        match d.datatype()? {
+            Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::Int => Ok(Self::Number(d.i64()?)),
+            Type::String | Type::StringIndef => Ok(Self::Text(decode_text(d)?)),
+            t => Err(minicbor::decode::Error::type_mismatch(t)),
         }
     }
 }
@@ -1483,5 +1491,103 @@ mod tests {
         minicbor::encode(alg, &mut buf).unwrap();
         let decoded_alg: HashAlgorithm = minicbor::decode(&buf).unwrap();
         assert_eq!(alg, decoded_alg);
+    }
+
+    #[test]
+    fn extension_name_roundtrip() {
+        let names = [
+            ExtensionName::Number(0),
+            ExtensionName::Number(1),
+            ExtensionName::Number(-1),
+            ExtensionName::Number(-256),
+            ExtensionName::Number(i64::MAX),
+            ExtensionName::Number(i64::MIN),
+            ExtensionName::Text(String::new()),
+            ExtensionName::Text("example".to_owned()),
+        ];
+
+        for name in names {
+            let mut buf = Vec::new();
+            minicbor::encode(&name, &mut buf).unwrap();
+            let decoded: ExtensionName = minicbor::decode(&buf).unwrap();
+            assert_eq!(name, decoded);
+        }
+    }
+
+    #[test]
+    fn extension_name_in_map() {
+        let mut extensions = BTreeMap::new();
+        extensions.insert(ExtensionName::Number(1), cbor::Value::Int(7));
+        extensions.insert(ExtensionName::Number(-1), cbor::Value::Int(8));
+        extensions.insert(
+            ExtensionName::Text("example".to_owned()),
+            cbor::Value::Int(9),
+        );
+
+        let mut buf = Vec::new();
+        minicbor::encode(&extensions, &mut buf).unwrap();
+        let decoded: BTreeMap<ExtensionName, cbor::Value> = minicbor::decode(&buf).unwrap();
+        assert_eq!(extensions, decoded);
+    }
+
+    #[test]
+    fn extension_name_indefinite_length_text() {
+        let mut encoder = minicbor::Encoder::new(Vec::new());
+        encoder.begin_str().unwrap();
+        encoder.str("exa").unwrap();
+        encoder.str("mple").unwrap();
+        encoder.end().unwrap();
+        let buf = encoder.into_writer();
+
+        let decoded: ExtensionName = minicbor::decode(&buf).unwrap();
+        assert_eq!(decoded, ExtensionName::Text("example".to_owned()));
+    }
+
+    #[test]
+    fn extension_name_rejects_other_types() {
+        for buf in [encode_value(true), encode_value(1.5f64), encode_value(())] {
+            assert!(minicbor::decode::<ExtensionName>(&buf).is_err());
+        }
+    }
+
+    /// The CDDL allows any CBOR integer, so names outside the `i64` range are
+    /// rejected with an overflow error rather than silently wrapping.
+    #[test]
+    fn extension_name_rejects_out_of_range_numbers() {
+        let above = encode_value(i64::MAX as u64 + 1);
+        let below = [vec![0x3b], (i64::MAX as u64 + 1).to_be_bytes().to_vec()].concat();
+
+        for buf in [above, below] {
+            assert!(minicbor::decode::<ExtensionName>(&buf).is_err());
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn extension_name_minicbor_serde_compat() {
+        let names = [
+            ExtensionName::Number(0),
+            ExtensionName::Number(1),
+            ExtensionName::Number(-1),
+            ExtensionName::Number(-256),
+            ExtensionName::Number(i64::MAX),
+            ExtensionName::Number(i64::MIN),
+            ExtensionName::Text("example".to_owned()),
+        ];
+
+        for name in names {
+            let minicbor_bytes = encode_value(&name);
+            let serde_bytes = minicbor_serde::to_vec(&name).unwrap();
+            assert_eq!(hex::encode(&minicbor_bytes), hex::encode(&serde_bytes));
+
+            let decoded: ExtensionName = minicbor_serde::from_slice(&serde_bytes).unwrap();
+            assert_eq!(name, decoded);
+        }
+    }
+
+    fn encode_value<T: minicbor::Encode<()>>(value: T) -> Vec<u8> {
+        let mut buf = Vec::new();
+        minicbor::encode(value, &mut buf).unwrap();
+        buf
     }
 }

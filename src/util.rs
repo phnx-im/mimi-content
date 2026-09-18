@@ -30,3 +30,21 @@ macro_rules! impl_encode_decode_num_enum {
         }
     };
 }
+
+/// Decode a CBOR text string, concatenating the chunks of an indefinite-length string.
+pub(crate) fn decode_text(
+    d: &mut minicbor::Decoder<'_>,
+) -> Result<String, minicbor::decode::Error> {
+    d.str_iter()?.collect()
+}
+
+/// Decode a CBOR byte string, concatenating the chunks of an indefinite-length string.
+pub(crate) fn decode_bytes(
+    d: &mut minicbor::Decoder<'_>,
+) -> Result<Vec<u8>, minicbor::decode::Error> {
+    let mut bytes = Vec::new();
+    for chunk in d.bytes_iter()? {
+        bytes.extend_from_slice(chunk?);
+    }
+    Ok(bytes)
+}

@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use minicbor::data::Type;
 use std::{borrow::Cow, collections::BTreeMap};
+
+use crate::util::{decode_bytes, decode_text};
 
 /// A sum type covering the CBOR values you actually need.
 /// Inspired from ciborium::Value but rewritten for minicbor.
@@ -56,15 +59,14 @@ impl<'b, C> minicbor::Decode<'b, C> for Value {
         d: &mut minicbor::Decoder<'b>,
         _ctx: &mut C,
     ) -> Result<Self, minicbor::decode::Error> {
-        use minicbor::data::Type;
         match d.datatype()? {
             Type::Bool => Ok(Value::Bool(d.bool()?)),
             Type::U8 | Type::U16 | Type::U32 | Type::U64 => Ok(Value::Int(d.u64()? as i64)),
             Type::I8 | Type::I16 | Type::I32 | Type::I64 => Ok(Value::Int(d.i64()?)),
             Type::F32 => Ok(Value::Float(d.f32()? as f64)),
             Type::F64 => Ok(Value::Float(d.f64()?)),
-            Type::String | Type::StringIndef => Ok(Value::Text(d.str()?.to_string().into())),
-            Type::Bytes | Type::BytesIndef => Ok(Value::Bytes(d.bytes()?.to_vec())),
+            Type::String | Type::StringIndef => Ok(Value::Text(decode_text(d)?.into())),
+            Type::Bytes | Type::BytesIndef => Ok(Value::Bytes(decode_bytes(d)?)),
             Type::Null | Type::Undefined => {
                 d.skip()?;
                 Ok(Value::Null)
@@ -92,7 +94,7 @@ impl<'b, C> minicbor::Decode<'b, C> for Value {
                         d.skip()?;
                         break;
                     }
-                    let k = d.str()?.to_string();
+                    let k = decode_text(d)?;
                     let v = Value::decode(d, _ctx)?;
                     map.insert(k, v);
                     if len.is_some() && map.len() == len.unwrap() as usize {
@@ -214,5 +216,70 @@ impl<T: Into<Value>> From<Option<T>> for Value {
 impl<T: Into<Value>> From<BTreeMap<String, T>> for Value {
     fn from(v: BTreeMap<String, T>) -> Self {
         Value::Map(v.into_iter().map(|(k, v)| (k, v.into())).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn decode(bytes: &[u8]) -> Value {
+        minicbor::decode(bytes).unwrap()
+    }
+
+    #[test]
+    fn definite_length_roundtrip() {
+        let value = Value::Array(vec![
+            Value::Text("example".into()),
+            Value::Bytes(vec![1, 2, 3]),
+            Value::Map(BTreeMap::from([("key".to_owned(), Value::Int(-7))])),
+        ]);
+
+        let mut buf = Vec::new();
+        minicbor::encode(&value, &mut buf).unwrap();
+        assert_eq!(decode(&buf), value);
+    }
+
+    #[test]
+    fn indefinite_length_text() {
+        let mut e = minicbor::Encoder::new(Vec::new());
+        e.begin_str().unwrap();
+        e.str("exa").unwrap();
+        e.str("mple").unwrap();
+        e.end().unwrap();
+
+        assert_eq!(decode(&e.into_writer()), Value::Text("example".into()));
+    }
+
+    #[test]
+    fn indefinite_length_bytes() {
+        let mut e = minicbor::Encoder::new(Vec::new());
+        e.begin_bytes().unwrap();
+        e.bytes(&[1, 2]).unwrap();
+        e.bytes(&[3]).unwrap();
+        e.end().unwrap();
+
+        assert_eq!(decode(&e.into_writer()), Value::Bytes(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn indefinite_length_map_key() {
+        let mut e = minicbor::Encoder::new(Vec::new());
+        e.map(1).unwrap();
+        e.begin_str().unwrap();
+        e.str("ke").unwrap();
+        e.str("y").unwrap();
+        e.end().unwrap();
+        e.u8(7).unwrap();
+
+        let expected = Value::Map(BTreeMap::from([("key".to_owned(), Value::Int(7))]));
+        assert_eq!(decode(&e.into_writer()), expected);
+    }
+
+    #[test]
+    fn rejects_unsupported_type() {
+        let mut buf = Vec::new();
+        minicbor::encode(minicbor::data::IanaTag::DateTime.tag(), &mut buf).unwrap();
+        assert!(minicbor::decode::<Value>(&buf).is_err());
     }
 }
