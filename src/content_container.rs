@@ -2,13 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use minicbor::bytes::ByteVec;
+use minicbor::{bytes::ByteVec, data::Type};
 use num_enum::{FromPrimitive, IntoPrimitive};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, convert::Infallible};
 
 use crate::{
-    cbor, impl_encode_decode_num_enum, MessageStatus, MessageStatusReport, PerMessageStatus,
+    cbor, impl_encode_decode_num_enum, util::decode_text, MessageStatus, MessageStatusReport,
+    PerMessageStatus,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -226,11 +227,10 @@ impl<C> minicbor::Decode<'_, C> for ExtensionName {
         d: &mut minicbor::Decoder<'_>,
         _ctx: &mut C,
     ) -> Result<Self, minicbor::decode::Error> {
-        if let Ok(numerical_value) = d.u64() {
-            Ok(Self::Number(numerical_value))
-        } else {
-            let text_value = d.str()?;
-            Ok(Self::Text(text_value.to_owned()))
+        match d.datatype()? {
+            Type::U8 | Type::U16 | Type::U32 | Type::U64 => Ok(Self::Number(d.u64()?)),
+            Type::String | Type::StringIndef => Ok(Self::Text(decode_text(d)?)),
+            t => Err(minicbor::decode::Error::type_mismatch(t)),
         }
     }
 }
@@ -1483,5 +1483,62 @@ mod tests {
         minicbor::encode(alg, &mut buf).unwrap();
         let decoded_alg: HashAlgorithm = minicbor::decode(&buf).unwrap();
         assert_eq!(alg, decoded_alg);
+    }
+
+    #[test]
+    fn extension_name_roundtrip() {
+        let names = [
+            ExtensionName::Number(0),
+            ExtensionName::Number(1),
+            ExtensionName::Number(u64::MAX),
+            ExtensionName::Text(String::new()),
+            ExtensionName::Text("example".to_owned()),
+        ];
+
+        for name in names {
+            let mut buf = Vec::new();
+            minicbor::encode(&name, &mut buf).unwrap();
+            let decoded: ExtensionName = minicbor::decode(&buf).unwrap();
+            assert_eq!(name, decoded);
+        }
+    }
+
+    #[test]
+    fn extension_name_in_map() {
+        let mut extensions = BTreeMap::new();
+        extensions.insert(ExtensionName::Number(1), cbor::Value::Int(7));
+        extensions.insert(
+            ExtensionName::Text("example".to_owned()),
+            cbor::Value::Int(8),
+        );
+
+        let mut buf = Vec::new();
+        minicbor::encode(&extensions, &mut buf).unwrap();
+        let decoded: BTreeMap<ExtensionName, cbor::Value> = minicbor::decode(&buf).unwrap();
+        assert_eq!(extensions, decoded);
+    }
+
+    #[test]
+    fn extension_name_indefinite_length_text() {
+        let mut encoder = minicbor::Encoder::new(Vec::new());
+        encoder.begin_str().unwrap();
+        encoder.str("exa").unwrap();
+        encoder.str("mple").unwrap();
+        encoder.end().unwrap();
+        let buf = encoder.into_writer();
+
+        let decoded: ExtensionName = minicbor::decode(&buf).unwrap();
+        assert_eq!(decoded, ExtensionName::Text("example".to_owned()));
+    }
+
+    #[test]
+    fn extension_name_rejects_other_types() {
+        let mut buf = Vec::new();
+        minicbor::encode(true, &mut buf).unwrap();
+        assert!(minicbor::decode::<ExtensionName>(&buf).is_err());
+
+        let mut buf = Vec::new();
+        minicbor::encode(-1i8, &mut buf).unwrap();
+        assert!(minicbor::decode::<ExtensionName>(&buf).is_err());
     }
 }
