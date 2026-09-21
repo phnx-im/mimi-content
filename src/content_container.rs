@@ -4,6 +4,8 @@
 
 use minicbor::{bytes::ByteVec, data::Type};
 use sha2::{Digest, Sha256};
+#[cfg(test)]
+use std::str::FromStr;
 use std::{collections::BTreeMap, convert::Infallible, fmt};
 
 use crate::{
@@ -41,14 +43,15 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[derive(minicbor::Encode, minicbor::Decode, Default, PartialEq, Debug, Clone)]
 #[cbor(array)]
 pub struct MimiContentV1 {
-    #[cbor(n(0), with = "minicbor::bytes")]
-    pub replaces: Option<Vec<u8>>,
-    #[cbor(n(1), with = "minicbor::bytes")]
+    #[cbor(n(0))]
+    pub replaces: Option<MimiId>,
+    #[cbor(n(1))]
+    #[cbor(with = "minicbor::bytes")]
     pub topic_id: Vec<u8>,
     #[cbor(n(2))]
     pub expires: Option<Expiration>,
-    #[cbor(n(3), with = "minicbor::bytes")]
-    pub in_reply_to: Option<Vec<u8>>,
+    #[cbor(n(3))]
+    pub in_reply_to: Option<MimiId>,
     #[cbor(n(4))]
     pub last_seen: Vec<ByteVec>,
     #[cbor(n(5))]
@@ -72,18 +75,49 @@ impl MimiContentV1 {
 }
 
 #[derive(minicbor::Encode, minicbor::Decode, Default, PartialEq, Debug, Clone)]
+#[cbor(transparent)]
+pub struct MimiId(#[cbor(with = "minicbor::bytes")] pub [u8; 32]);
+
+impl MimiId {
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    #[cfg(test)]
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.0)
+    }
+}
+
+impl From<[u8; 32]> for MimiId {
+    fn from(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+}
+
+#[cfg(test)]
+impl FromStr for MimiId {
+    type Err = hex::FromHexError;
+
+    fn from_str(id: &str) -> Result<Self, Self::Err> {
+        Ok(Self(hex::decode(id)?.try_into().unwrap()))
+    }
+}
+
+#[derive(minicbor::Encode, minicbor::Decode, Default, PartialEq, Debug, Clone)]
 #[cbor(array)]
 pub struct MimiContent {
     #[cbor(n(0), with = "minicbor::bytes")]
     pub salt: [u8; 16],
-    #[cbor(n(1), with = "minicbor::bytes")]
-    pub replaces: Option<Vec<u8>>,
-    #[cbor(n(2), with = "minicbor::bytes")]
+    #[cbor(n(1))]
+    pub replaces: Option<MimiId>,
+    #[cbor(n(2))]
+    #[cbor(with = "minicbor::bytes")]
     pub topic_id: Vec<u8>,
     #[cbor(n(3))]
     pub expires: Option<Expiration>, // TODO: RFC does not allow null
-    #[cbor(n(4), with = "minicbor::bytes")]
-    pub in_reply_to: Option<Vec<u8>>, // TODO: Enforce this is a message id
+    #[cbor(n(4))]
+    pub in_reply_to: Option<MimiId>,
     #[cbor(n(5))]
     pub extensions: BTreeMap<ExtensionName, cbor::Value>, // TODO: Enforce max sizes
     #[cbor(n(6))]
@@ -91,7 +125,7 @@ pub struct MimiContent {
 }
 
 impl MimiContent {
-    pub fn message_id(&self, sender: &[u8], room: &[u8]) -> Result<[u8; 32]> {
+    pub fn message_id(&self, sender: &[u8], room: &[u8]) -> Result<MimiId> {
         let mut hasher = Sha256::new();
         hasher.update(sender);
         hasher.update(room);
@@ -100,9 +134,9 @@ impl MimiContent {
         let hash = hasher.finalize();
 
         let mut result = [0u8; 32];
-        result[0] = 0x01;
+        result[0] = 0x01; // SHA256 is 0x01
         result[1..].copy_from_slice(&hash[..31]);
-        Ok(result)
+        Ok(MimiId(result))
     }
 
     pub fn is_status_update(&self) -> bool {
@@ -679,14 +713,13 @@ mod tests {
         };
 
         assert_eq!(
-            hex::encode(
-                value
-                    .message_id(
-                        b"mimi://example.com/u/alice-smith",
-                        b"mimi://example.com/r/engineering_team"
-                    )
-                    .unwrap()
-            ),
+            value
+                .message_id(
+                    b"mimi://example.com/u/alice-smith",
+                    b"mimi://example.com/r/engineering_team"
+                )
+                .unwrap()
+                .to_hex(),
             "01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79"
         );
 
@@ -749,7 +782,8 @@ mod tests {
             topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: Some(
-                hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
+                "01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79"
+                    .parse()
                     .unwrap(),
             ),
             extensions: extensions_bob(),
@@ -764,14 +798,13 @@ mod tests {
         let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(
-                value
-                    .message_id(
-                        b"mimi://example.com/u/bob-jones",
-                        b"mimi://example.com/r/engineering_team"
-                    )
-                    .unwrap()
-            ),
+            value
+                .message_id(
+                    b"mimi://example.com/u/bob-jones",
+                    b"mimi://example.com/r/engineering_team"
+                )
+                .unwrap()
+                .to_hex(),
             "01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836"
         );
 
@@ -830,7 +863,8 @@ mod tests {
             topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: Some(
-                hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
+                "01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79"
+                    .parse()
                     .unwrap(),
             ),
             extensions: extensions_cathy(),
@@ -845,14 +879,13 @@ mod tests {
         let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(
-                value
-                    .message_id(
-                        b"mimi://example.com/u/cathy-washington",
-                        b"mimi://example.com/r/engineering_team"
-                    )
-                    .unwrap()
-            ),
+            value
+                .message_id(
+                    b"mimi://example.com/u/cathy-washington",
+                    b"mimi://example.com/r/engineering_team"
+                )
+                .unwrap()
+                .to_hex(),
             "01b1a14a88f4480e1336be86987854f838a3ec82944d4533d8d4088578550ed7"
         );
 
@@ -906,13 +939,15 @@ mod tests {
         let value = MimiContent {
             salt: parse_salt("b8c2e6d8800ecf45df39be6c45f4c042"),
             replaces: Some(
-                hex::decode(b"01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836")
+                "01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836"
+                    .parse()
                     .unwrap(),
             ),
             topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: Some(
-                hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
+                "01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79"
+                    .parse()
                     .unwrap(),
             ),
             extensions: extensions_bob(),
@@ -927,14 +962,13 @@ mod tests {
         let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(
-                value
-                    .message_id(
-                        b"mimi://example.com/u/bob-jones",
-                        b"mimi://example.com/r/engineering_team"
-                    )
-                    .unwrap()
-            ),
+            value
+                .message_id(
+                    b"mimi://example.com/u/bob-jones",
+                    b"mimi://example.com/r/engineering_team"
+                )
+                .unwrap()
+                .to_hex(),
             "01fdcd2f418e4b16f6ba319800a44c12b3b0730871f29385bdc6d151b15751ad"
         );
 
@@ -982,13 +1016,15 @@ mod tests {
         let value = MimiContent {
             salt: parse_salt("0a590d73b2c7761c39168be5ebf7f2e6"),
             replaces: Some(
-                hex::decode(b"01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836")
+                "01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836"
+                    .parse()
                     .unwrap(),
             ),
             topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: Some(
-                hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
+                "01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79"
+                    .parse()
                     .unwrap(),
             ),
             extensions: extensions_bob(),
@@ -1001,14 +1037,13 @@ mod tests {
         let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(
-                value
-                    .message_id(
-                        b"mimi://example.com/u/bob-jones",
-                        b"mimi://example.com/r/engineering_team"
-                    )
-                    .unwrap()
-            ),
+            value
+                .message_id(
+                    b"mimi://example.com/u/bob-jones",
+                    b"mimi://example.com/r/engineering_team"
+                )
+                .unwrap()
+                .to_hex(),
             "01b85744b443e9db85de5bb826c04bcd65b625e53d17839dc8a3f21321421088"
         );
 
@@ -1067,14 +1102,13 @@ mod tests {
         let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(
-                value
-                    .message_id(
-                        b"mimi://example.com/u/alice-smith",
-                        b"mimi://example.com/r/engineering_team"
-                    )
-                    .unwrap()
-            ),
+            value
+                .message_id(
+                    b"mimi://example.com/u/alice-smith",
+                    b"mimi://example.com/r/engineering_team"
+                )
+                .unwrap()
+                .to_hex(),
             "0106308e2c03346eba95b24abdfa9fe643aa247debfb7192feae647155316920"
         );
 
@@ -1163,14 +1197,13 @@ mod tests {
         let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(
-                value
-                    .message_id(
-                        b"mimi://example.com/u/bob-jones",
-                        b"mimi://example.com/r/engineering_team"
-                    )
-                    .unwrap()
-            ),
+            value
+                .message_id(
+                    b"mimi://example.com/u/bob-jones",
+                    b"mimi://example.com/r/engineering_team"
+                )
+                .unwrap()
+                .to_hex(),
             "01ad825f6116adeb437a7b1f95a9d9acbcc708f83f5df505d32af9c2826e8b5f"
         );
 
@@ -1267,14 +1300,13 @@ mod tests {
         let result = value.serialize().unwrap();
 
         assert_eq!(
-            hex::encode(
-                value
-                    .message_id(
-                        b"mimi://example.com/u/alice-smith",
-                        b"mimi://example.com/r/engineering_team"
-                    )
-                    .unwrap()
-            ),
+            value
+                .message_id(
+                    b"mimi://example.com/u/alice-smith",
+                    b"mimi://example.com/r/engineering_team"
+                )
+                .unwrap()
+                .to_hex(),
             "01d8dab2e22b75dee4f5e52bb181d2d732008a235b80375113803e36b32a5f06"
         );
 
@@ -1379,6 +1411,7 @@ mod tests {
                         b"mimi://example.com/r/engineering_team"
                     )
                     .unwrap()
+                    .as_bytes()
             ),
             "015c0469c52da0938c27cfa16702e27735a4729746be5f64bc5838f754828464"
         );
