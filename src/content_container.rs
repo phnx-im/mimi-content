@@ -23,6 +23,8 @@ pub enum Error {
     Encode(minicbor::encode::Error<Infallible>),
     #[error("decoding failed: {0}")]
     Decode(minicbor::decode::Error),
+    #[error("maximum nesting depth exceeded")]
+    MaxNestingDepthExceeded,
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -123,6 +125,24 @@ impl MimiContent {
         } else {
             false
         }
+    }
+
+    /// Adds or replaces an extension.
+    ///
+    /// If the value has nesting depth greater than 4, an error is returned.
+    ///
+    /// See
+    /// <https://www.ietf.org/archive/id/draft-ietf-mimi-content-09.html#name-depth-restrictions>
+    pub fn with_extension(
+        mut self,
+        name: ExtensionName,
+        value: cbor::Value,
+    ) -> Result<Self, Error> {
+        if value.depth() > 3 {
+            return Err(Error::MaxNestingDepthExceeded);
+        }
+        self.extensions.insert(name, value);
+        Ok(self)
     }
 
     pub fn simple_markdown_message(markdown: String, random_salt: [u8; 16]) -> Self {
