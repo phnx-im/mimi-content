@@ -60,7 +60,7 @@ pub struct MimiContentV1 {
 impl MimiContentV1 {
     pub fn upgrade(self) -> MimiContent {
         MimiContent {
-            salt: [0; 16].to_vec(),
+            salt: [0; 16],
             replaces: self.replaces,
             topic_id: self.topic_id,
             expires: self.expires,
@@ -75,7 +75,7 @@ impl MimiContentV1 {
 #[cbor(array)]
 pub struct MimiContent {
     #[cbor(n(0), with = "minicbor::bytes")]
-    pub salt: Vec<u8>,
+    pub salt: [u8; 16],
     #[cbor(n(1), with = "minicbor::bytes")]
     pub replaces: Option<Vec<u8>>,
     #[cbor(n(2), with = "minicbor::bytes")]
@@ -91,7 +91,7 @@ pub struct MimiContent {
 }
 
 impl MimiContent {
-    pub fn message_id(&self, sender: &[u8], room: &[u8]) -> Result<Vec<u8>> {
+    pub fn message_id(&self, sender: &[u8], room: &[u8]) -> Result<[u8; 32]> {
         let mut hasher = Sha256::new();
         hasher.update(sender);
         hasher.update(room);
@@ -99,8 +99,9 @@ impl MimiContent {
         hasher.update(self.salt.as_slice());
         let hash = hasher.finalize();
 
-        let mut result = vec![0x01];
-        result.extend(&hash[0..31]);
+        let mut result = [0u8; 32];
+        result[0] = 0x01;
+        result[1..].copy_from_slice(&hash[..31]);
         Ok(result)
     }
 
@@ -167,7 +168,7 @@ impl MimiContent {
         Ok((
             report,
             Self {
-                salt: random_salt.to_vec(),
+                salt: random_salt,
                 replaces: None,
                 topic_id: b"".to_vec(),
                 expires: None,
@@ -614,6 +615,10 @@ mod tests {
 
     use super::*;
 
+    pub(crate) fn parse_salt(salt: &'static str) -> [u8; 16] {
+        hex::decode(salt).unwrap().try_into().unwrap()
+    }
+
     fn extensions_alice() -> BTreeMap<ExtensionName, cbor::Value> {
         let mut extensions = BTreeMap::new();
         extensions.insert(
@@ -659,7 +664,7 @@ mod tests {
     #[test]
     fn original_message() {
         let value = MimiContent {
-            salt: hex::decode("5eed9406c2545547ab6f09f20a18b003").unwrap(),
+            salt: parse_salt("5eed9406c2545547ab6f09f20a18b003"),
             replaces: None,
             topic_id: b"".to_vec(),
             expires: None,
@@ -739,7 +744,7 @@ mod tests {
     #[test]
     fn reply() {
         let value = MimiContent {
-            salt: hex::decode("11a458c73b8dd2cf404db4b378b8fe4d").unwrap(),
+            salt: parse_salt("11a458c73b8dd2cf404db4b378b8fe4d"),
             replaces: None,
             topic_id: b"".to_vec(),
             expires: None,
@@ -820,7 +825,7 @@ mod tests {
     #[test]
     fn reaction() {
         let value = MimiContent {
-            salt: hex::decode("d37bc0e6a8b4f04e9e6382375f587bf6").unwrap(),
+            salt: parse_salt("d37bc0e6a8b4f04e9e6382375f587bf6"),
             replaces: None,
             topic_id: b"".to_vec(),
             expires: None,
@@ -899,7 +904,7 @@ mod tests {
     #[test]
     fn edit() {
         let value = MimiContent {
-            salt: hex::decode("b8c2e6d8800ecf45df39be6c45f4c042").unwrap(),
+            salt: parse_salt("b8c2e6d8800ecf45df39be6c45f4c042"),
             replaces: Some(
                 hex::decode(b"01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836")
                     .unwrap(),
@@ -975,7 +980,7 @@ mod tests {
     #[test]
     fn delete() {
         let value = MimiContent {
-            salt: hex::decode("0a590d73b2c7761c39168be5ebf7f2e6").unwrap(),
+            salt: parse_salt("0a590d73b2c7761c39168be5ebf7f2e6"),
             replaces: Some(
                 hex::decode(b"01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836")
                     .unwrap(),
@@ -1045,8 +1050,7 @@ mod tests {
     #[test]
     fn expiring() {
         let value = MimiContent {
-            salt: hex::decode("33be993eb39f418f9295afc2ae160d2d")
-                .unwrap(),
+            salt: parse_salt("33be993eb39f418f9295afc2ae160d2d"),
             replaces: None,
             topic_id: b"".to_vec(),
             expires: Some(Expiration { relative: false, time: 1644390004 }),
@@ -1129,7 +1133,7 @@ mod tests {
     #[test]
     fn attachments() {
         let value = MimiContent {
-            salt: hex::decode("18fac6371e4e53f1aeaf8a013155c166").unwrap(),
+            salt: parse_salt("18fac6371e4e53f1aeaf8a013155c166"),
             replaces: None,
             topic_id: b"".to_vec(),
             expires: None,
@@ -1236,7 +1240,7 @@ mod tests {
     #[test]
     fn conferencing() {
         let value = MimiContent {
-            salt: hex::decode("678ac6cd54de049c3e9665cd212470fa").unwrap(),
+            salt: parse_salt("678ac6cd54de049c3e9665cd212470fa"),
             replaces: None,
             topic_id: b"Foo 118".to_vec(),
             expires: None,
@@ -1338,7 +1342,7 @@ mod tests {
     #[test]
     fn multipart() {
         let value = MimiContent {
-            salt: hex::decode("261c953e178af653fe3d42641b91d814").unwrap(),
+            salt: parse_salt("261c953e178af653fe3d42641b91d814"),
             replaces: None,
             topic_id: b"".to_vec(),
             expires: None,
@@ -1436,7 +1440,7 @@ mod tests {
     #[test]
     fn multipart_minicbor_serde_compat() {
         let value = MimiContent {
-            salt: hex::decode("261c953e178af653fe3d42641b91d814").unwrap(),
+            salt: parse_salt("261c953e178af653fe3d42641b91d814"),
             replaces: None,
             topic_id: b"".to_vec(),
             expires: None,
