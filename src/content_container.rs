@@ -75,8 +75,13 @@ impl MimiContentV1 {
 }
 
 #[derive(minicbor::Encode, minicbor::Decode, Default, PartialEq, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cbor(transparent)]
-pub struct MimiId(#[cbor(with = "minicbor::bytes")] pub [u8; 32]);
+pub struct MimiId(
+    #[cfg_attr(feature = "serde", serde(with = "serde_bytes"))]
+    #[cbor(with = "minicbor::bytes")]
+    pub [u8; 32],
+);
 
 impl MimiId {
     pub fn as_bytes(&self) -> &[u8; 32] {
