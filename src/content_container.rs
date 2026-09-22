@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use minicbor::{bytes::ByteVec, data::Type};
+#[cfg(feature = "serde")]
+use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, convert::Infallible, fmt};
 
@@ -20,6 +22,8 @@ pub enum Error {
     Encode(minicbor::encode::Error<Infallible>),
     Decode(minicbor::decode::Error),
     MaxNestingDepthExceeded,
+    #[cfg(feature = "serde")]
+    Serde(crate::serde::ValueSerdeError),
 }
 
 impl fmt::Display for Error {
@@ -30,6 +34,8 @@ impl fmt::Display for Error {
             Error::Encode(e) => write!(f, "encoding failed: {e}"),
             Error::Decode(e) => write!(f, "decoding failed: {e}"),
             Error::MaxNestingDepthExceeded => write!(f, "maximum nesting depth exceeded"),
+            #[cfg(feature = "serde")]
+            Error::Serde(e) => write!(f, "serde conversion failed: {e}"),
         }
     }
 }
@@ -118,17 +124,41 @@ impl MimiContent {
     ///
     /// See
     /// <https://www.ietf.org/archive/id/draft-ietf-mimi-content-09.html#name-depth-restrictions>
-    pub fn with_extension(
+    #[cfg(feature = "serde")]
+    pub fn with_extension<T: Serialize>(
         mut self,
         name: ExtensionName,
-        value: cbor::Value,
+        value: T,
     ) -> Result<Self, Error> {
+        let value = cbor::Value::from_serde(&value).map_err(Error::Serde)?;
         // The extension map is at level 1, we have only max 3 levels of nesting.
         if !value.within_depth(3) {
             return Err(Error::MaxNestingDepthExceeded);
         }
         self.extensions.insert(name, value);
         Ok(self)
+    }
+
+    #[cfg(feature = "serde")]
+    pub fn extension<T: DeserializeOwned>(&self, name: &ExtensionName) -> Result<Option<T>, Error> {
+        self.extensions
+            .get(name)
+            .cloned()
+            .map(cbor::Value::into_serde)
+            .transpose()
+            .map_err(Error::Serde)
+    }
+
+    #[cfg(feature = "serde")]
+    pub fn take_extension<T: DeserializeOwned>(
+        &mut self,
+        name: &ExtensionName,
+    ) -> Result<Option<T>, Error> {
+        self.extensions
+            .remove(name)
+            .map(cbor::Value::into_serde)
+            .transpose()
+            .map_err(Error::Serde)
     }
 
     pub fn simple_markdown_message(markdown: String, random_salt: [u8; 16]) -> Self {

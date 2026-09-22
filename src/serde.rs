@@ -5,9 +5,13 @@
 use std::{borrow::Cow, collections::BTreeMap, fmt};
 
 use ::serde::{
-    de::{self, DeserializeSeed, Visitor},
+    de::{
+        self,
+        value::{MapAccessDeserializer, MapDeserializer, SeqDeserializer},
+        DeserializeSeed, IntoDeserializer, Visitor,
+    },
     ser::SerializeSeq,
-    Deserialize, Serialize, Serializer,
+    Deserialize, Deserializer, Serialize, Serializer,
 };
 
 use crate::{
@@ -51,7 +55,7 @@ impl ValueSerializer {
     }
 }
 
-/// An error that can be returned when serializing a serde value to [`Value`].
+/// An error that can occur when de/serializing a serde value from/to [`Value`].
 #[derive(Debug)]
 pub struct ValueSerdeError {
     msg: Cow<'static, str>,
@@ -72,6 +76,12 @@ impl fmt::Display for ValueSerdeError {
 impl std::error::Error for ValueSerdeError {}
 
 impl serde::ser::Error for ValueSerdeError {
+    fn custom<T: fmt::Display>(msg: T) -> Self {
+        ValueSerdeError::new(msg.to_string())
+    }
+}
+
+impl serde::de::Error for ValueSerdeError {
     fn custom<T: fmt::Display>(msg: T) -> Self {
         ValueSerdeError::new(msg.to_string())
     }
@@ -431,6 +441,123 @@ fn wrap_variant(variant: &'static str, value: Value) -> Value {
     Value::Map(BTreeMap::from([(Value::Text(variant.into()), value)]))
 }
 
+pub(crate) struct ValueDeserializer {
+    value: Value,
+}
+
+impl ValueDeserializer {
+    pub(crate) fn new(value: Value) -> Self {
+        Self { value }
+    }
+}
+
+impl Value {
+    fn unexpected(&self) -> de::Unexpected<'_> {
+        match self {
+            Value::Int(i) => de::Unexpected::Signed(*i),
+            Value::Bytes(items) => de::Unexpected::Bytes(items),
+            Value::Text(s) => de::Unexpected::Str(s),
+            Value::Array(_) => de::Unexpected::Seq,
+            Value::Map(_) => de::Unexpected::Map,
+            Value::Bool(b) => de::Unexpected::Bool(*b),
+            Value::Null => de::Unexpected::Unit,
+            Value::Float(f) => de::Unexpected::Float(*f),
+        }
+    }
+}
+
+// Lets serde's `SeqDeserializer`/`MapDeserializer` walk arrays and maps.
+impl<'de> IntoDeserializer<'de, ValueSerdeError> for ValueDeserializer {
+    type Deserializer = Self;
+
+    fn into_deserializer(self) -> Self {
+        self
+    }
+}
+
+impl<'de> Deserializer<'de> for ValueDeserializer {
+    type Error = ValueSerdeError;
+
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self.value {
+            Value::Int(i) => visitor.visit_i64(i),
+            Value::Bytes(items) => visitor.visit_byte_buf(items),
+            Value::Text(Cow::Borrowed(s)) => visitor.visit_borrowed_str(s),
+            Value::Text(Cow::Owned(s)) => visitor.visit_string(s),
+            Value::Array(items) => {
+                SeqDeserializer::new(items.into_iter().map(ValueDeserializer::new))
+                    .deserialize_any(visitor)
+            }
+            Value::Map(entries) => {
+                MapDeserializer::new(entries.into_iter().map(wrap_entry)).deserialize_any(visitor)
+            }
+            Value::Bool(b) => visitor.visit_bool(b),
+            Value::Null => visitor.visit_unit(),
+            Value::Float(f) => visitor.visit_f64(f),
+        }
+    }
+
+    // The serializer encodes a char as its code point.
+    fn deserialize_char<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self.value {
+            Value::Int(i) => {
+                let c = u32::try_from(i)
+                    .ok()
+                    .and_then(char::from_u32)
+                    .ok_or_else(|| de::Error::invalid_value(de::Unexpected::Signed(i), &"char"))?;
+                visitor.visit_char(c)
+            }
+            _ => self.deserialize_any(visitor),
+        }
+    }
+
+    fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self.value {
+            Value::Null => visitor.visit_none(),
+            _ => visitor.visit_some(self),
+        }
+    }
+
+    fn deserialize_newtype_struct<V: Visitor<'de>>(
+        self,
+        _name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error> {
+        visitor.visit_newtype_struct(self)
+    }
+
+    // See `wrap_variant` for the mirroring of the serializer.
+    fn deserialize_enum<V: Visitor<'de>>(
+        self,
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error> {
+        match self.value {
+            Value::Text(s) => visitor.visit_enum(s.into_deserializer()),
+            Value::Map(entries) if entries.len() == 1 => {
+                visitor.visit_enum(MapAccessDeserializer::new(MapDeserializer::new(
+                    entries.into_iter().map(wrap_entry),
+                )))
+            }
+            other => Err(de::Error::invalid_type(
+                other.unexpected(),
+                &"a string or a single-entry map",
+            )),
+        }
+    }
+
+    ::serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64
+        str string bytes byte_buf unit unit_struct
+        seq tuple tuple_struct map struct identifier ignored_any
+    }
+}
+
+fn wrap_entry((k, v): (Value, Value)) -> (ValueDeserializer, ValueDeserializer) {
+    (ValueDeserializer::new(k), ValueDeserializer::new(v))
+}
+
 struct ValueSeed {
     depth: usize,
 }
@@ -438,10 +565,7 @@ struct ValueSeed {
 impl<'de> DeserializeSeed<'de> for ValueSeed {
     type Value = Value;
 
-    fn deserialize<D: ::serde::Deserializer<'de>>(
-        self,
-        deserializer: D,
-    ) -> Result<Self::Value, D::Error> {
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
         struct ValueVisitor {
             depth: usize,
         }
@@ -486,10 +610,7 @@ impl<'de> DeserializeSeed<'de> for ValueSeed {
             fn visit_none<E: de::Error>(self) -> Result<Value, E> {
                 Ok(Value::Null)
             }
-            fn visit_some<D: ::serde::Deserializer<'de>>(
-                self,
-                deserializer: D,
-            ) -> Result<Value, D::Error> {
+            fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<Value, D::Error> {
                 ValueSeed {
                     depth: self.depth + 1,
                 }
@@ -535,7 +656,7 @@ impl<'de> DeserializeSeed<'de> for ValueSeed {
 }
 
 impl<'de> Deserialize<'de> for Value {
-    fn deserialize<D: ::serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         ValueSeed { depth: 0 }.deserialize(deserializer)
     }
 }
@@ -550,7 +671,7 @@ impl Serialize for ExtensionName {
 }
 
 impl<'de> Deserialize<'de> for ExtensionName {
-    fn deserialize<D: ::serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct ExtensionNameVisitor;
 
         impl<'de> Visitor<'de> for ExtensionNameVisitor {
@@ -595,7 +716,7 @@ impl Serialize for MimiContent {
 }
 
 impl<'de> Deserialize<'de> for MimiContent {
-    fn deserialize<D: ::serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct MimiContentVisitor;
 
         impl<'de> Visitor<'de> for MimiContentVisitor {
@@ -653,7 +774,7 @@ impl Serialize for Expiration {
 }
 
 impl<'de> Deserialize<'de> for Expiration {
-    fn deserialize<D: ::serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct ExpirationVisitor;
 
         impl<'de> Visitor<'de> for ExpirationVisitor {
@@ -758,7 +879,7 @@ impl Serialize for NestedPart {
 }
 
 impl<'de> Deserialize<'de> for NestedPart {
-    fn deserialize<D: ::serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct NestedPartVisitor;
 
         impl<'de> Visitor<'de> for NestedPartVisitor {
@@ -898,13 +1019,35 @@ mod tests {
     }
 
     /// `T` -> [`Value`] -> CBOR -> `T`
-    fn round_trip<T: Serialize + for<'de> Deserialize<'de>>(v: &T) -> T {
+    fn round_trip<T: Serialize + de::DeserializeOwned>(v: &T) -> T {
         let bytes = minicbor_serde::to_vec(Value::from_serde(v).unwrap()).unwrap();
         minicbor_serde::from_slice(&bytes).unwrap()
     }
 
+    /// `T` -> [`Value`] -> `T`
+    fn round_trip_value<T: Serialize + de::DeserializeOwned>(v: &T) -> T {
+        Value::from_serde(v).unwrap().into_serde().unwrap()
+    }
+
+    /// Checks that `v` survives both round trips.
+    fn assert_round_trips<T: Serialize + de::DeserializeOwned + fmt::Debug + PartialEq>(v: T) {
+        assert_eq!(round_trip(&v), v);
+        assert_eq!(round_trip_value(&v), v);
+    }
+
     fn text(s: &'static str) -> Value {
         Value::Text(s.into())
+    }
+
+    fn sample_value() -> Value {
+        Value::Map(BTreeMap::from([
+            (text("bytes"), Value::Bytes(vec![1, 2, 3])),
+            (text("null"), Value::Null),
+            (
+                text("nested"),
+                Value::Array(vec![Value::Int(-7), Value::Float(1.5), Value::Bool(true)]),
+            ),
+        ]))
     }
 
     #[test]
@@ -1029,35 +1172,63 @@ mod tests {
     }
 
     #[test]
-    fn values_round_trip_through_cbor() {
+    fn values_round_trip() {
         for value in [
             Enum::Unit,
             Enum::Newtype(9),
             Enum::Tuple(1, 2),
             Enum::Struct { x: 5 },
         ] {
-            assert_eq!(round_trip(&value), value);
+            assert_round_trips(value);
         }
 
-        let value = Struct {
+        assert_round_trips(Struct {
             a: 1,
             b: vec![7, 8],
             c: Some("x".to_owned()),
-        };
-        assert_eq!(round_trip(&value), value);
-        assert_eq!(round_trip(&'x'), 'x');
+        });
+        assert_round_trips(Struct {
+            a: u32::MAX,
+            b: vec![],
+            c: None,
+        });
+
+        assert_round_trips('x');
+        assert_round_trips(sample_value());
+
+        // Only through `into_serde`: `Value` widens f32 to f64 and encodes `()` as null, which
+        // minicbor_serde refuses to read back.
+        assert!(round_trip_value(&true));
+        assert_eq!(round_trip_value(&-1i8), -1);
+        assert_eq!(round_trip_value(&7u64), 7);
+        assert_eq!(round_trip_value(&1.5f32), 1.5);
+        assert_eq!(round_trip_value(&"abc".to_owned()), "abc");
+        assert_eq!(round_trip_value(&()), ());
+        assert_eq!(round_trip_value(&Some(3u32)), Some(3));
+        assert_eq!(round_trip_value(&None::<u32>), None);
+        assert_eq!(
+            round_trip_value(&(1u8, "a".to_owned())),
+            (1, "a".to_owned())
+        );
+        assert_eq!(round_trip_value(&vec![1u32, 2]), vec![1, 2]);
+        assert_eq!(
+            round_trip_value(&BTreeMap::from([(1u32, "a".to_owned())])),
+            BTreeMap::from([(1, "a".to_owned())])
+        );
+    }
+
+    #[test]
+    fn enum_from_multi_entry_map_is_rejected() {
+        let value = Value::Map(BTreeMap::from([
+            (text("Newtype"), Value::Int(1)),
+            (text("Struct"), Value::Int(2)),
+        ]));
+        assert!(value.into_serde::<Enum>().is_err());
     }
 
     #[test]
     fn serde_encoding_matches_minicbor() {
-        let value = Value::Map(BTreeMap::from([
-            (text("bytes"), Value::Bytes(vec![1, 2, 3])),
-            (text("null"), Value::Null),
-            (
-                text("nested"),
-                Value::Array(vec![Value::Int(-7), Value::Float(1.5), Value::Bool(true)]),
-            ),
-        ]));
+        let value = sample_value();
 
         let bytes = minicbor_serde::to_vec(&value).unwrap();
         assert_eq!(minicbor::decode::<Value>(&bytes).unwrap(), value);
