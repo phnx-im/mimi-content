@@ -151,18 +151,6 @@ impl MimiContent {
             .map_err(Error::Serde)
     }
 
-    #[cfg(feature = "serde")]
-    pub fn take_extension<T: DeserializeOwned>(
-        &mut self,
-        name: &ExtensionName,
-    ) -> Result<Option<T>, Error> {
-        self.extensions
-            .remove(name)
-            .map(cbor::Value::into_serde)
-            .transpose()
-            .map_err(Error::Serde)
-    }
-
     pub fn simple_markdown_message(markdown: String, random_salt: [u8; 16]) -> Self {
         Self {
             salt: random_salt.into(),
