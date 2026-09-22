@@ -99,6 +99,10 @@ impl Serializer for ValueSerializer {
     type SerializeStruct = ValueMapSerializer;
     type SerializeStructVariant = ValueStructVariantSerializer;
 
+    fn is_human_readable(&self) -> bool {
+        false
+    }
+
     fn serialize_bool(self, v: bool) -> Result<Self::Ok, Self::Error> {
         Ok(Value::Bool(v))
     }
@@ -477,6 +481,10 @@ impl<'de> IntoDeserializer<'de, ValueSerdeError> for ValueDeserializer {
 
 impl<'de> Deserializer<'de> for ValueDeserializer {
     type Error = ValueSerdeError;
+
+    fn is_human_readable(&self) -> bool {
+        false
+    }
 
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self.value {
