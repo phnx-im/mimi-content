@@ -1356,4 +1356,83 @@ mod tests {
         })
         .is_err());
     }
+
+    /// Encodes as text for human-readable formats and as bytes otherwise, like `uuid` or
+    /// `chrono` do.
+    #[derive(Debug, PartialEq)]
+    struct Compact(u8);
+
+    impl Serialize for Compact {
+        fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            if s.is_human_readable() {
+                s.serialize_str(&self.0.to_string())
+            } else {
+                s.serialize_bytes(&[self.0])
+            }
+        }
+    }
+
+    impl<'de> Deserialize<'de> for Compact {
+        fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            if d.is_human_readable() {
+                let s = String::deserialize(d)?;
+                s.parse().map(Compact).map_err(de::Error::custom)
+            } else {
+                let bytes = serde_bytes::ByteBuf::deserialize(d)?;
+                match bytes.as_slice() {
+                    [b] => Ok(Compact(*b)),
+                    _ => Err(de::Error::custom("expected exactly one byte")),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn value_is_not_human_readable() {
+        assert!(!ValueSerializer::root().is_human_readable());
+        assert!(!ValueDeserializer::new(Value::Null).is_human_readable());
+
+        // at the root
+        assert_eq!(
+            Value::from_serde(Compact(7)).unwrap(),
+            Value::Bytes(vec![7])
+        );
+        assert_eq!(
+            Value::Bytes(vec![7]).into_serde::<Compact>().unwrap(),
+            Compact(7)
+        );
+        // the binary branch reads text as its raw bytes; a human-readable deserializer would
+        // parse it to `Compact(7)`
+        assert_eq!(text("7").into_serde::<Compact>().unwrap(), Compact(b'7'));
+
+        // nested in a struct, a sequence and a map, which use the nested serializers and
+        // serde's `SeqDeserializer`/`MapDeserializer`
+        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        struct Nested {
+            field: Compact,
+            seq: Vec<Compact>,
+            map: BTreeMap<u8, Compact>,
+        }
+
+        let nested = Nested {
+            field: Compact(1),
+            seq: vec![Compact(2), Compact(3)],
+            map: BTreeMap::from([(4, Compact(5))]),
+        };
+        assert_eq!(
+            Value::from_serde(&nested).unwrap(),
+            Value::Map(BTreeMap::from([
+                (text("field"), Value::Bytes(vec![1])),
+                (
+                    text("seq"),
+                    Value::Array(vec![Value::Bytes(vec![2]), Value::Bytes(vec![3])])
+                ),
+                (
+                    text("map"),
+                    Value::Map(BTreeMap::from([(Value::Int(4), Value::Bytes(vec![5]))]))
+                ),
+            ]))
+        );
+        assert_round_trips(nested);
+    }
 }
