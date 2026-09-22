@@ -21,6 +21,7 @@ pub enum Error {
     NotUtf8,
     Encode(minicbor::encode::Error<Infallible>),
     Decode(minicbor::decode::Error),
+    #[cfg(feature = "serde")]
     MaxNestingDepthExceeded,
     #[cfg(feature = "serde")]
     Serde(crate::serde::ValueSerdeError),
@@ -33,6 +34,7 @@ impl fmt::Display for Error {
             Error::NotUtf8 => write!(f, "not UTF-8"),
             Error::Encode(e) => write!(f, "encoding failed: {e}"),
             Error::Decode(e) => write!(f, "decoding failed: {e}"),
+            #[cfg(feature = "serde")]
             Error::MaxNestingDepthExceeded => write!(f, "maximum nesting depth exceeded"),
             #[cfg(feature = "serde")]
             Error::Serde(e) => write!(f, "serde conversion failed: {e}"),
