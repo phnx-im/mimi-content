@@ -14,7 +14,7 @@ use crate::{
     cbor::{Value, MAX_NESTING},
     content_container::{
         Disposition, EncryptionAlgorithm, Expiration, ExtensionName, HashAlgorithm, MimiContent,
-        NestedPart, PartSemantics,
+        MimiId, NestedPart, PartSemantics,
     },
 };
 
@@ -606,10 +606,10 @@ impl<'de> Deserialize<'de> for MimiContent {
             }
 
             fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<MimiContent, A::Error> {
-                let salt: serde_bytes::ByteBuf = seq
+                let salt: serde_bytes::ByteArray<16> = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(0, &self))?;
-                let replaces: Option<serde_bytes::ByteBuf> = seq
+                let replaces: Option<serde_bytes::ByteArray<32>> = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(1, &self))?;
                 let topic_id: serde_bytes::ByteBuf = seq
@@ -618,7 +618,7 @@ impl<'de> Deserialize<'de> for MimiContent {
                 let expires: Option<Expiration> = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(3, &self))?;
-                let in_reply_to: Option<serde_bytes::ByteBuf> = seq
+                let in_reply_to: Option<serde_bytes::ByteArray<32>> = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(4, &self))?;
                 let extensions: BTreeMap<ExtensionName, Value> = seq
@@ -628,11 +628,11 @@ impl<'de> Deserialize<'de> for MimiContent {
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(6, &self))?;
                 Ok(MimiContent {
-                    salt: salt.into_vec(),
-                    replaces: replaces.map(|b| b.into_vec()),
+                    salt: *salt,
+                    replaces: replaces.map(|b| MimiId::from(*b)),
                     topic_id: topic_id.into_vec(),
                     expires,
-                    in_reply_to: in_reply_to.map(|b| b.into_vec()),
+                    in_reply_to: in_reply_to.map(|b| MimiId::from(*b)),
                     extensions,
                     nested_part,
                 })
