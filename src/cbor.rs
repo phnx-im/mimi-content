@@ -166,11 +166,7 @@ impl<'b, C> minicbor::Decode<'b, C> for Value {
     }
 }
 
-/// Maximum nesting depth of a [`Value`].
-///
-/// Both decoders and [`Value::from_serde`] enforce it, and must agree on it, so that a value one
-/// path accepts is a value the others accept too. Each recurses once per level, and a debug build
-/// stack should have enough capacity to handle it easily.
+/// Maximum nesting depth of a [`Value`] when decoded/deserialized.
 pub(crate) const MAX_NESTING: usize = 32;
 
 fn decode_value<'b>(

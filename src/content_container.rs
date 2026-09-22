@@ -3,13 +3,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use minicbor::{bytes::ByteVec, data::Type};
-use num_enum::{FromPrimitive, IntoPrimitive};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, convert::Infallible};
 
 use crate::{
     cbor,
-    util::{decode_text, impl_encode_decode_num_enum},
+    util::{decode_text, open_enum},
     MessageStatus, MessageStatusReport, PerMessageStatus,
 };
 
@@ -274,47 +273,45 @@ pub struct Expiration {
     pub time: u32,
 }
 
-/// Content Hashing Algorithm
-///
-/// See [Named Information Hash Algorithm Registry].
-///
-/// [Named Information Hash Algorithm Registry]: https://www.iana.org/assignments/named-information/named-information.xhtml
-#[derive(Debug, Clone, Copy, Eq, PartialEq, IntoPrimitive, FromPrimitive)]
-#[repr(u8)]
-#[non_exhaustive]
-#[allow(non_camel_case_types)]
-pub enum HashAlgorithm {
-    Unspecified = 0,
-    /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
-    Sha256 = 1,
-    /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
-    Sha256_128 = 2,
-    /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
-    Sha256_120 = 3,
-    /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
-    Sha256_96 = 4,
-    /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
-    Sha256_64 = 5,
-    /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
-    Sha256_32 = 6,
-    /// [FIPS 180-4](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf)
-    Sha384 = 7,
-    /// [FIPS 180-4](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf)
-    Sha512 = 8,
-    /// [FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)
-    Sha3_224 = 9,
-    /// [FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)
-    Sha3_256 = 10,
-    /// [FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)
-    Sha3_384 = 11,
-    /// [FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)
-    Sha3_512 = 12,
-    /// Custom hash algorithm
-    #[num_enum(catch_all)]
-    Custom(u8),
+open_enum! {
+    /// Content Hashing Algorithm
+    ///
+    /// See [Named Information Hash Algorithm Registry].
+    ///
+    /// [Named Information Hash Algorithm Registry]: https://www.iana.org/assignments/named-information/named-information.xhtml
+    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    #[non_exhaustive]
+    #[allow(non_camel_case_types)]
+    pub enum HashAlgorithm: u8 {
+        Unspecified = 0,
+        /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
+        Sha256 = 1,
+        /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
+        Sha256_128 = 2,
+        /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
+        Sha256_120 = 3,
+        /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
+        Sha256_96 = 4,
+        /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
+        Sha256_64 = 5,
+        /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
+        Sha256_32 = 6,
+        /// [FIPS 180-4](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf)
+        Sha384 = 7,
+        /// [FIPS 180-4](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf)
+        Sha512 = 8,
+        /// [FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)
+        Sha3_224 = 9,
+        /// [FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)
+        Sha3_256 = 10,
+        /// [FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)
+        Sha3_384 = 11,
+        /// [FIPS 202](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)
+        Sha3_512 = 12,
+        /// Custom hash algorithm
+        Custom(_),
+    }
 }
-
-impl_encode_decode_num_enum!(HashAlgorithm, u8);
 
 #[allow(clippy::derivable_impls)]
 impl Default for HashAlgorithm {
@@ -528,112 +525,106 @@ impl<C> minicbor::Decode<'_, C> for NestedPart {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, IntoPrimitive, FromPrimitive)]
-#[repr(u8)]
-pub enum Disposition {
-    Unspecified = 0,
-    Render = 1,
-    Reaction = 2,
-    Profile = 3,
-    Inline = 4,
-    Icon = 5,
-    Attachment = 6,
-    Session = 7,
-    Preview = 8,
-    #[num_enum(catch_all)]
-    Custom(u8),
+open_enum! {
+    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    pub enum Disposition: u8 {
+        Unspecified = 0,
+        Render = 1,
+        Reaction = 2,
+        Profile = 3,
+        Inline = 4,
+        Icon = 5,
+        Attachment = 6,
+        Session = 7,
+        Preview = 8,
+        Custom(_),
+    }
 }
 
-impl_encode_decode_num_enum!(Disposition, u8);
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy, IntoPrimitive, FromPrimitive)]
-#[repr(u16)]
-pub enum EncryptionAlgorithm {
-    None = 0,
-    /// Reference: [RFC5116](https://www.rfc-editor.org/rfc/rfc5116.html)
-    Aes128Gcm = 1,
-    /// Reference: [RFC5116](https://www.rfc-editor.org/rfc/rfc5116.html)
-    Aes256Gcm = 2,
-    /// Reference: [RFC5116](https://www.rfc-editor.org/rfc/rfc5116.html)
-    Aes128Ccm = 3,
-    /// Reference: [RFC5116](https://www.rfc-editor.org/rfc/rfc5116.html)
-    Aes256Ccm = 4,
-    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
-    Aes128Gcm8 = 5,
-    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
-    Aes256Gcm8 = 6,
-    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
-    Aes128Gcm12 = 7,
-    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
-    Aes256Gcm12 = 8,
-    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
-    Aes128CcmShort = 9,
-    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
-    Aes256CcmShort = 10,
-    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
-    Aes128CcmShort8 = 11,
-    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
-    Aes256CcmShort8 = 12,
-    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
-    Aes128CcmShort12 = 13,
-    /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
-    Aes256CcmShort12 = 14,
-    /// Reference: [RFC5297](https://www.rfc-editor.org/rfc/rfc5297.html)
-    AesSivCmac256 = 15,
-    /// Reference: [RFC5297](https://www.rfc-editor.org/rfc/rfc5297.html)
-    AesSivCmac384 = 16,
-    /// Reference: [RFC5297](https://www.rfc-editor.org/rfc/rfc5297.html)
-    AesSivCmac512 = 17,
-    /// Reference: [RFC6655](https://www.rfc-editor.org/rfc/rfc6655.html)
-    Aes128Ccm8 = 18,
-    /// Reference: [RFC6655](https://www.rfc-editor.org/rfc/rfc6655.html)
-    Aes256Ccm8 = 19,
-    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
-    Aes128OcbTaglen128 = 20,
-    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
-    Aes128OcbTaglen96 = 21,
-    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
-    Aes128OcbTaglen64 = 22,
-    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
-    Aes192OcbTaglen128 = 23,
-    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
-    Aes192OcbTaglen96 = 24,
-    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
-    Aes192OcbTaglen64 = 25,
-    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
-    Aes256OcbTaglen128 = 26,
-    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
-    Aes256OcbTaglen96 = 27,
-    /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
-    Aes256OcbTaglen64 = 28,
-    /// Reference: [RFC8439](https://www.rfc-editor.org/rfc/rfc8439.html)
-    Chacha20Poly1305 = 29,
-    /// Reference: [RFC8452](https://www.rfc-editor.org/rfc/rfc8452.html)
-    Aes128GcmSiv = 30,
-    /// Reference: [RFC8452](https://www.rfc-editor.org/rfc/rfc8452.html)
-    Aes256GcmSiv = 31,
-    /// Reference: [draft-irtf-cfrg-aegis-aead-08](https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/08/)
-    Aegis128L = 32,
-    /// Reference: [draft-irtf-cfrg-aegis-aead-08](https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/08/)
-    Aegis256 = 33,
-    /// Unknown algorithm
-    #[num_enum(catch_all)]
-    Custom(u16),
+open_enum! {
+    #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+    pub enum EncryptionAlgorithm: u16 {
+        None = 0,
+        /// Reference: [RFC5116](https://www.rfc-editor.org/rfc/rfc5116.html)
+        Aes128Gcm = 1,
+        /// Reference: [RFC5116](https://www.rfc-editor.org/rfc/rfc5116.html)
+        Aes256Gcm = 2,
+        /// Reference: [RFC5116](https://www.rfc-editor.org/rfc/rfc5116.html)
+        Aes128Ccm = 3,
+        /// Reference: [RFC5116](https://www.rfc-editor.org/rfc/rfc5116.html)
+        Aes256Ccm = 4,
+        /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+        Aes128Gcm8 = 5,
+        /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+        Aes256Gcm8 = 6,
+        /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+        Aes128Gcm12 = 7,
+        /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+        Aes256Gcm12 = 8,
+        /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+        Aes128CcmShort = 9,
+        /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+        Aes256CcmShort = 10,
+        /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+        Aes128CcmShort8 = 11,
+        /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+        Aes256CcmShort8 = 12,
+        /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+        Aes128CcmShort12 = 13,
+        /// Reference: [RFC5282](https://www.rfc-editor.org/rfc/rfc5282.html)
+        Aes256CcmShort12 = 14,
+        /// Reference: [RFC5297](https://www.rfc-editor.org/rfc/rfc5297.html)
+        AesSivCmac256 = 15,
+        /// Reference: [RFC5297](https://www.rfc-editor.org/rfc/rfc5297.html)
+        AesSivCmac384 = 16,
+        /// Reference: [RFC5297](https://www.rfc-editor.org/rfc/rfc5297.html)
+        AesSivCmac512 = 17,
+        /// Reference: [RFC6655](https://www.rfc-editor.org/rfc/rfc6655.html)
+        Aes128Ccm8 = 18,
+        /// Reference: [RFC6655](https://www.rfc-editor.org/rfc/rfc6655.html)
+        Aes256Ccm8 = 19,
+        /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+        Aes128OcbTaglen128 = 20,
+        /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+        Aes128OcbTaglen96 = 21,
+        /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+        Aes128OcbTaglen64 = 22,
+        /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+        Aes192OcbTaglen128 = 23,
+        /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+        Aes192OcbTaglen96 = 24,
+        /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+        Aes192OcbTaglen64 = 25,
+        /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+        Aes256OcbTaglen128 = 26,
+        /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+        Aes256OcbTaglen96 = 27,
+        /// Reference: [RFC7253, Section 3.1](https://www.rfc-editor.org/rfc/rfc7253.html#section-3.1)
+        Aes256OcbTaglen64 = 28,
+        /// Reference: [RFC8439](https://www.rfc-editor.org/rfc/rfc8439.html)
+        Chacha20Poly1305 = 29,
+        /// Reference: [RFC8452](https://www.rfc-editor.org/rfc/rfc8452.html)
+        Aes128GcmSiv = 30,
+        /// Reference: [RFC8452](https://www.rfc-editor.org/rfc/rfc8452.html)
+        Aes256GcmSiv = 31,
+        /// Reference: [draft-irtf-cfrg-aegis-aead-08](https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/08/)
+        Aegis128L = 32,
+        /// Reference: [draft-irtf-cfrg-aegis-aead-08](https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/08/)
+        Aegis256 = 33,
+        /// Unknown algorithm
+        Custom(_),
+    }
 }
 
-impl_encode_decode_num_enum!(EncryptionAlgorithm, u16);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, FromPrimitive)]
-#[repr(u8)]
-pub enum PartSemantics {
-    ChooseOne = 0,
-    SingleUnit = 1,
-    ProcessAll = 2,
-    #[num_enum(catch_all)]
-    Custom(u8),
+open_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum PartSemantics: u8 {
+        ChooseOne = 0,
+        SingleUnit = 1,
+        ProcessAll = 2,
+        Custom(_),
+    }
 }
-
-impl_encode_decode_num_enum!(PartSemantics, u8);
 
 #[cfg(test)]
 mod tests {

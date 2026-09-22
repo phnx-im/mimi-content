@@ -942,7 +942,7 @@ impl<'de> Deserialize<'de> for NestedPart {
     }
 }
 
-macro_rules! impl_serde_num_enum {
+macro_rules! impl_serde_open_enum {
     ($ty:ty, $repr:ty) => {
         impl ::serde::Serialize for $ty {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -966,10 +966,10 @@ macro_rules! impl_serde_num_enum {
     };
 }
 
-impl_serde_num_enum!(HashAlgorithm, u8);
-impl_serde_num_enum!(EncryptionAlgorithm, u16);
-impl_serde_num_enum!(Disposition, u8);
-impl_serde_num_enum!(PartSemantics, u8);
+impl_serde_open_enum!(HashAlgorithm, u8);
+impl_serde_open_enum!(EncryptionAlgorithm, u16);
+impl_serde_open_enum!(Disposition, u8);
+impl_serde_open_enum!(PartSemantics, u8);
 
 #[cfg(test)]
 mod tests {

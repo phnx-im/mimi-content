@@ -2,10 +2,67 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-/// Implement `minicbor::Encode` and `minicbor::Decode` for an enum that implements
-/// `num_enum::IntoPrimitive` and `num_from::FromPrimitive`.
-macro_rules! impl_encode_decode_num_enum {
-    ($ty:ty, $repr:ty) => {
+/// Define an open enum: one over a primitive code space, such as an IANA registry, where the last
+/// variant, written as `Custom(_)`, carries every value the other variants do not name, so that
+/// code points added after this crate was built still round-trip.
+///
+/// Generates the conversions to and from `$repr` as well as `minicbor::Encode` and
+/// `minicbor::Decode` implementations.
+macro_rules! open_enum {
+    (
+        $(#[$meta:meta])*
+        $vis:vis enum $ty:ident: $repr:ident {
+            $($variants:tt)*
+        }
+    ) => {
+        $crate::util::open_enum!(@collect [$(#[$meta])* $vis enum $ty: $repr] [] $($variants)*);
+    };
+
+    // The variants are collected one by one, because a repetition matching them would not know
+    // where the last one, the catch-all, starts: both begin with an identifier.
+    (
+        @collect [$($head:tt)*] [$($collected:tt)*]
+        $(#[$variant_meta:meta])* $variant:ident = $value:literal,
+        $($rest:tt)*
+    ) => {
+        $crate::util::open_enum!(
+            @collect [$($head)*] [$($collected)* ($(#[$variant_meta])* $variant = $value)]
+            $($rest)*
+        );
+    };
+
+    // The catch-all variant ends the list and emits the definition.
+    (
+        @collect
+        [$(#[$meta:meta])* $vis:vis enum $ty:ident: $repr:ident]
+        [$(($(#[$variant_meta:meta])* $variant:ident = $value:literal))*]
+        $(#[$catch_all_meta:meta])* $catch_all:ident(_),
+    ) => {
+        $(#[$meta])*
+        #[repr($repr)]
+        $vis enum $ty {
+            $($(#[$variant_meta])* $variant = $value,)*
+            $(#[$catch_all_meta])* $catch_all($repr),
+        }
+
+        impl From<$ty> for $repr {
+            fn from(value: $ty) -> Self {
+                match value {
+                    $($ty::$variant => $value,)*
+                    $ty::$catch_all(value) => value,
+                }
+            }
+        }
+
+        impl From<$repr> for $ty {
+            fn from(value: $repr) -> Self {
+                match value {
+                    $($value => $ty::$variant,)*
+                    value => $ty::$catch_all(value),
+                }
+            }
+        }
+
         impl<C> ::minicbor::Encode<C> for $ty {
             fn encode<W: ::minicbor::encode::Write>(
                 &self,
@@ -28,9 +85,15 @@ macro_rules! impl_encode_decode_num_enum {
             }
         }
     };
+
+    (@collect $head:tt $collected:tt $($rest:tt)*) => {
+        compile_error!(
+            "expected variants of the form `Variant = value,` followed by a `Custom(_),` catch-all"
+        );
+    };
 }
 
-pub(crate) use impl_encode_decode_num_enum;
+pub(crate) use open_enum;
 
 /// Decode a CBOR text string, concatenating the chunks of an indefinite-length string.
 pub(crate) fn decode_text(

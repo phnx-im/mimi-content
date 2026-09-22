@@ -16,7 +16,6 @@ serde = ["dep:serde", "serde_bytes"]
 minicbor = { version = "2.2.1", features = ["std", "derive"] }
 sha2 = "0.10.9"
 thiserror = "2.0.11"
-num_enum = "0.7.6"
 serde = { version = "1.0.228", optional = true }
 serde_bytes = { version = "0.11.19", optional = true }
 
