@@ -18,7 +18,8 @@ use crate::util::{decode_bytes, decode_text};
 /// The ordering of the Value is based on the canonical key order (RFC 8949 §4.2.1: keys sorted
 /// bytewise on their encodings).
 ///
-/// The value can be decoded via `minicbor::decode` can have a maximum nesting depth of 32.
+/// A `Value` has a maximum nesting depth of 32, enforced on every path that builds one from
+/// input we do not control: `minicbor::decode`, `serde::Deserialize` and [`Value::from_serde`].
 #[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
@@ -34,7 +35,7 @@ pub enum Value {
 impl Value {
     #[cfg(feature = "serde")]
     pub fn from_serde(v: impl Serialize) -> Result<Self, ValueSerdeError> {
-        v.serialize(crate::serde::ValueSerializer)
+        v.serialize(crate::serde::ValueSerializer::root())
     }
 
     /// Returns `true` if the depth <= `max_depth`, otherwise `false`.
@@ -165,11 +166,12 @@ impl<'b, C> minicbor::Decode<'b, C> for Value {
     }
 }
 
-/// Maximum nesting depth of a decoded [`Value`].
+/// Maximum nesting depth of a [`Value`].
 ///
-/// Decoding recurses once per level, and a debug build stack should have enough capacity to handle
-/// it easily.
-const MAX_NESTING: usize = 32;
+/// Both decoders and [`Value::from_serde`] enforce it, and must agree on it, so that a value one
+/// path accepts is a value the others accept too. Each recurses once per level, and a debug build
+/// stack should have enough capacity to handle it easily.
+pub(crate) const MAX_NESTING: usize = 32;
 
 fn decode_value<'b>(
     d: &mut minicbor::Decoder<'b>,

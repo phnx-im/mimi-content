@@ -5,13 +5,13 @@
 use std::{collections::BTreeMap, fmt};
 
 use ::serde::{
-    de::{self, Visitor},
+    de::{self, DeserializeSeed, Visitor},
     ser::SerializeSeq,
     Deserialize, Serialize, Serializer,
 };
 
 use crate::{
-    cbor::Value,
+    cbor::{Value, MAX_NESTING},
     content_container::{
         Disposition, EncryptionAlgorithm, Expiration, ExtensionName, HashAlgorithm, MimiContent,
         NestedPart, PartSemantics,
@@ -33,7 +33,25 @@ impl Serialize for Value {
     }
 }
 
-pub(crate) struct ValueSerializer;
+pub(crate) struct ValueSerializer {
+    depth: usize,
+}
+
+impl ValueSerializer {
+    pub(crate) fn root() -> Self {
+        Self { depth: 0 }
+    }
+
+    /// A serializer for a value nested `depth` levels below the root.
+    fn nested(depth: usize) -> Result<Self, ValueSerdeError> {
+        if depth >= MAX_NESTING {
+            return Err(ValueSerdeError {
+                msg: "too many levels of nesting".into(),
+            });
+        }
+        Ok(Self { depth })
+    }
+}
 
 #[derive(Debug)]
 pub struct ValueSerdeError {
@@ -176,19 +194,22 @@ impl Serializer for ValueSerializer {
     where
         T: ?Sized + Serialize,
     {
-        let mut map = BTreeMap::new();
-        map.insert(Value::Text(variant.into()), value.serialize(self)?);
-        Ok(Value::Map(map))
+        Ok(Value::Map(BTreeMap::from([(
+            Value::Text(variant.into()),
+            value.serialize(ValueSerializer::nested(self.depth + 1)?)?,
+        )])))
     }
 
     fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
         Ok(ValueSeqSerializer {
+            depth: self.depth,
             items: Vec::with_capacity(len.unwrap_or(0)),
         })
     }
 
     fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
         Ok(ValueSeqSerializer {
+            depth: self.depth,
             items: Vec::with_capacity(len),
         })
     }
@@ -199,6 +220,7 @@ impl Serializer for ValueSerializer {
         len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
         Ok(ValueSeqSerializer {
+            depth: self.depth,
             items: Vec::with_capacity(len),
         })
     }
@@ -211,6 +233,7 @@ impl Serializer for ValueSerializer {
         len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
         Ok(ValueTupleVariantSerializer {
+            depth: self.depth + 1,
             variant,
             items: Vec::with_capacity(len),
         })
@@ -218,6 +241,7 @@ impl Serializer for ValueSerializer {
 
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
         Ok(ValueMapSerializer {
+            depth: self.depth,
             items: BTreeMap::new(),
             next_key: None,
         })
@@ -229,6 +253,7 @@ impl Serializer for ValueSerializer {
         _len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
         Ok(ValueMapSerializer {
+            depth: self.depth,
             items: BTreeMap::new(),
             next_key: None,
         })
@@ -242,6 +267,7 @@ impl Serializer for ValueSerializer {
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
         Ok(ValueStructVariantSerializer {
+            depth: self.depth + 1,
             variant,
             items: BTreeMap::new(),
         })
@@ -249,6 +275,7 @@ impl Serializer for ValueSerializer {
 }
 
 pub(crate) struct ValueSeqSerializer {
+    depth: usize,
     items: Vec<Value>,
 }
 
@@ -257,7 +284,8 @@ impl serde::ser::SerializeSeq for ValueSeqSerializer {
     type Error = ValueSerdeError;
 
     fn serialize_element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
-        self.items.push(value.serialize(ValueSerializer)?);
+        self.items
+            .push(value.serialize(ValueSerializer::nested(self.depth + 1)?)?);
         Ok(())
     }
 
@@ -271,7 +299,8 @@ impl serde::ser::SerializeTuple for ValueSeqSerializer {
     type Error = ValueSerdeError;
 
     fn serialize_element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
-        self.items.push(value.serialize(ValueSerializer)?);
+        self.items
+            .push(value.serialize(ValueSerializer::nested(self.depth + 1)?)?);
         Ok(())
     }
 
@@ -285,7 +314,8 @@ impl serde::ser::SerializeTupleStruct for ValueSeqSerializer {
     type Error = ValueSerdeError;
 
     fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
-        self.items.push(value.serialize(ValueSerializer)?);
+        self.items
+            .push(value.serialize(ValueSerializer::nested(self.depth + 1)?)?);
         Ok(())
     }
 
@@ -295,6 +325,7 @@ impl serde::ser::SerializeTupleStruct for ValueSeqSerializer {
 }
 
 pub(crate) struct ValueMapSerializer {
+    depth: usize,
     items: BTreeMap<Value, Value>,
     next_key: Option<Value>,
 }
@@ -304,7 +335,7 @@ impl serde::ser::SerializeMap for ValueMapSerializer {
     type Error = ValueSerdeError;
 
     fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<(), Self::Error> {
-        self.next_key = Some(key.serialize(ValueSerializer)?);
+        self.next_key = Some(key.serialize(ValueSerializer::nested(self.depth + 1)?)?);
         Ok(())
     }
 
@@ -314,7 +345,10 @@ impl serde::ser::SerializeMap for ValueMapSerializer {
         })?;
         if self
             .items
-            .insert(key, value.serialize(ValueSerializer)?)
+            .insert(
+                key,
+                value.serialize(ValueSerializer::nested(self.depth + 1)?)?,
+            )
             .is_some()
         {
             return Err(ValueSerdeError {
@@ -345,7 +379,10 @@ impl serde::ser::SerializeStruct for ValueMapSerializer {
     ) -> Result<(), Self::Error> {
         if self
             .items
-            .insert(Value::Text(key.into()), value.serialize(ValueSerializer)?)
+            .insert(
+                Value::Text(key.into()),
+                value.serialize(ValueSerializer::nested(self.depth + 1)?)?,
+            )
             .is_some()
         {
             return Err(ValueSerdeError {
@@ -361,6 +398,7 @@ impl serde::ser::SerializeStruct for ValueMapSerializer {
 }
 
 pub(crate) struct ValueTupleVariantSerializer {
+    depth: usize,
     variant: &'static str,
     items: Vec<Value>,
 }
@@ -370,7 +408,8 @@ impl serde::ser::SerializeTupleVariant for ValueTupleVariantSerializer {
     type Error = ValueSerdeError;
 
     fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
-        self.items.push(value.serialize(ValueSerializer)?);
+        self.items
+            .push(value.serialize(ValueSerializer::nested(self.depth + 1)?)?);
         Ok(())
     }
 
@@ -380,6 +419,7 @@ impl serde::ser::SerializeTupleVariant for ValueTupleVariantSerializer {
 }
 
 pub(crate) struct ValueStructVariantSerializer {
+    depth: usize,
     variant: &'static str,
     items: BTreeMap<Value, Value>,
 }
@@ -395,7 +435,10 @@ impl serde::ser::SerializeStructVariant for ValueStructVariantSerializer {
     ) -> Result<(), Self::Error> {
         if self
             .items
-            .insert(Value::Text(key.into()), value.serialize(ValueSerializer)?)
+            .insert(
+                Value::Text(key.into()),
+                value.serialize(ValueSerializer::nested(self.depth + 1)?)?,
+            )
             .is_some()
         {
             return Err(ValueSerdeError {
@@ -411,14 +454,23 @@ impl serde::ser::SerializeStructVariant for ValueStructVariantSerializer {
 }
 
 fn wrap_variant(variant: &'static str, value: Value) -> Value {
-    let mut map = BTreeMap::new();
-    map.insert(Value::Text(variant.into()), value);
-    Value::Map(map)
+    Value::Map(BTreeMap::from([(Value::Text(variant.into()), value)]))
 }
 
-impl<'de> Deserialize<'de> for Value {
-    fn deserialize<D: ::serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct ValueVisitor;
+struct ValueSeed {
+    depth: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for ValueSeed {
+    type Value = Value;
+
+    fn deserialize<D: ::serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Self::Value, D::Error> {
+        struct ValueVisitor {
+            depth: usize,
+        }
 
         impl<'de> Visitor<'de> for ValueVisitor {
             type Value = Value;
@@ -485,7 +537,10 @@ impl<'de> Deserialize<'de> for Value {
                 self,
                 deserializer: D,
             ) -> Result<Value, D::Error> {
-                Value::deserialize(deserializer)
+                ValueSeed {
+                    depth: self.depth + 1,
+                }
+                .deserialize(deserializer)
             }
             fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
                 let cap = seq
@@ -493,21 +548,42 @@ impl<'de> Deserialize<'de> for Value {
                     .unwrap_or(0)
                     .min(4096 / std::mem::size_of::<Value>());
                 let mut arr = Vec::with_capacity(cap);
-                while let Some(v) = seq.next_element()? {
+                while let Some(v) = seq.next_element_seed(ValueSeed {
+                    depth: self.depth + 1,
+                })? {
                     arr.push(v);
                 }
                 Ok(Value::Array(arr))
             }
             fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
                 let mut result = BTreeMap::new();
-                while let Some((k, v)) = map.next_entry()? {
-                    result.insert(k, v);
+                while let Some((k, v)) = map.next_entry_seed(
+                    ValueSeed {
+                        depth: self.depth + 1,
+                    },
+                    ValueSeed {
+                        depth: self.depth + 1,
+                    },
+                )? {
+                    if result.insert(k, v).is_some() {
+                        return Err(de::Error::custom("duplicate key"));
+                    }
                 }
                 Ok(Value::Map(result))
             }
         }
 
-        deserializer.deserialize_any(ValueVisitor)
+        if self.depth >= MAX_NESTING {
+            return Err(de::Error::custom("too many levels of nesting"));
+        }
+
+        deserializer.deserialize_any(ValueVisitor { depth: self.depth })
+    }
+}
+
+impl<'de> Deserialize<'de> for Value {
+    fn deserialize<D: ::serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        ValueSeed { depth: 0 }.deserialize(deserializer)
     }
 }
 
@@ -915,13 +991,9 @@ mod tests {
         c: Option<String>,
     }
 
-    fn to_value<T: Serialize>(v: &T) -> Value {
-        v.serialize(ValueSerializer).unwrap()
-    }
-
     /// `T` -> [`Value`] -> CBOR -> `T`
     fn round_trip<T: Serialize + for<'de> Deserialize<'de>>(v: &T) -> T {
-        let bytes = minicbor_serde::to_vec(to_value(v)).unwrap();
+        let bytes = minicbor_serde::to_vec(Value::from_serde(v).unwrap()).unwrap();
         minicbor_serde::from_slice(&bytes).unwrap()
     }
 
@@ -931,48 +1003,56 @@ mod tests {
 
     #[test]
     fn scalars() {
-        assert_eq!(to_value(&true), Value::Bool(true));
-        assert_eq!(to_value(&-1i8), Value::Int(-1));
-        assert_eq!(to_value(&7u32), Value::Int(7));
-        assert_eq!(to_value(&1.5f32), Value::Float(1.5));
-        assert_eq!(to_value(&'x'), Value::Int(u32::from('x').into()));
-        assert_eq!(to_value(&"abc"), text("abc"));
+        assert_eq!(Value::from_serde(true).unwrap(), Value::Bool(true));
+        assert_eq!(Value::from_serde(-1i8).unwrap(), Value::Int(-1));
+        assert_eq!(Value::from_serde(7u32).unwrap(), Value::Int(7));
+        assert_eq!(Value::from_serde(1.5f32).unwrap(), Value::Float(1.5));
+        assert_eq!(
+            Value::from_serde('x').unwrap(),
+            Value::Int(u32::from('x').into())
+        );
+        assert_eq!(Value::from_serde("abc").unwrap(), text("abc"));
     }
 
     #[test]
     fn u64_beyond_i64_is_rejected() {
-        assert_eq!(to_value(&(i64::MAX as u64)), Value::Int(i64::MAX));
-        assert!((i64::MAX as u64 + 1).serialize(ValueSerializer).is_err());
+        assert_eq!(
+            Value::from_serde(i64::MAX as u64).unwrap(),
+            Value::Int(i64::MAX)
+        );
+        assert!((i64::MAX as u64 + 1)
+            .serialize(ValueSerializer::root())
+            .is_err());
     }
 
     #[test]
     fn bytes_need_serde_bytes() {
         let bytes = serde_bytes::ByteBuf::from(vec![1u8, 2]);
-        assert_eq!(to_value(&bytes), Value::Bytes(vec![1, 2]));
+        assert_eq!(Value::from_serde(&bytes).unwrap(), Value::Bytes(vec![1, 2]));
 
         let plain = vec![1u8, 2];
         assert_eq!(
-            to_value(&plain),
+            Value::from_serde(&plain).unwrap(),
             Value::Array(vec![Value::Int(1), Value::Int(2)])
         );
     }
 
     #[test]
     fn options_and_units_collapse_to_null() {
-        assert_eq!(to_value(&Some(3u32)), Value::Int(3));
-        assert_eq!(to_value(&None::<u32>), Value::Null);
-        assert_eq!(to_value(&Some(None::<u32>)), Value::Null);
-        assert_eq!(to_value(&()), Value::Null);
+        assert_eq!(Value::from_serde(Some(3u32)).unwrap(), Value::Int(3));
+        assert_eq!(Value::from_serde(None::<u32>).unwrap(), Value::Null);
+        assert_eq!(Value::from_serde(Some(None::<u32>)).unwrap(), Value::Null);
+        assert_eq!(Value::from_serde(()).unwrap(), Value::Null);
     }
 
     #[test]
     fn sequences_become_arrays() {
         assert_eq!(
-            to_value(&vec![1u32, 2]),
+            Value::from_serde(vec![1u32, 2]).unwrap(),
             Value::Array(vec![Value::Int(1), Value::Int(2)])
         );
         assert_eq!(
-            to_value(&(1u32, "a")),
+            Value::from_serde((1u32, "a")).unwrap(),
             Value::Array(vec![Value::Int(1), text("a")])
         );
     }
@@ -981,7 +1061,7 @@ mod tests {
     fn map_pairs_each_key_with_its_value() {
         let map = BTreeMap::from([("k1", 1u32), ("k2", 2)]);
         assert_eq!(
-            to_value(&map),
+            Value::from_serde(&map).unwrap(),
             Value::Map(BTreeMap::from([
                 (text("k1"), Value::Int(1)),
                 (text("k2"), Value::Int(2)),
@@ -991,25 +1071,26 @@ mod tests {
 
     #[test]
     fn map_rejects_duplicate_key() {
-        let mut map = ValueSerializer.serialize_map(None).unwrap();
+        let mut map = ValueSerializer::root().serialize_map(None).unwrap();
         map.serialize_entry("k", &1u32).unwrap();
         assert!(map.serialize_entry("k", &2u32).is_err());
     }
 
     #[test]
     fn map_rejects_value_without_key() {
-        let mut map = ValueSerializer.serialize_map(None).unwrap();
+        let mut map = ValueSerializer::root().serialize_map(None).unwrap();
         assert!(map.serialize_value(&1u32).is_err());
     }
 
     #[test]
     fn structs_become_text_keyed_maps() {
         assert_eq!(
-            to_value(&Struct {
+            Value::from_serde(&Struct {
                 a: 1,
                 b: vec![7, 8],
                 c: None,
-            }),
+            })
+            .unwrap(),
             Value::Map(BTreeMap::from([
                 (text("a"), Value::Int(1)),
                 (text("b"), Value::Bytes(vec![7, 8])),
@@ -1020,20 +1101,20 @@ mod tests {
 
     #[test]
     fn variants_are_externally_tagged() {
-        assert_eq!(to_value(&Enum::Unit), text("Unit"));
+        assert_eq!(Value::from_serde(&Enum::Unit).unwrap(), text("Unit"));
         assert_eq!(
-            to_value(&Enum::Newtype(9)),
+            Value::from_serde(Enum::Newtype(9)).unwrap(),
             Value::Map(BTreeMap::from([(text("Newtype"), Value::Int(9))]))
         );
         assert_eq!(
-            to_value(&Enum::Tuple(1, 2)),
+            Value::from_serde(Enum::Tuple(1, 2)).unwrap(),
             Value::Map(BTreeMap::from([(
                 text("Tuple"),
                 Value::Array(vec![Value::Int(1), Value::Int(2)])
             )]))
         );
         assert_eq!(
-            to_value(&Enum::Struct { x: 5 }),
+            Value::from_serde(&Enum::Struct { x: 5 }).unwrap(),
             Value::Map(BTreeMap::from([(
                 text("Struct"),
                 Value::Map(BTreeMap::from([(text("x"), Value::Int(5))]))
@@ -1061,8 +1142,6 @@ mod tests {
         assert_eq!(round_trip(&'x'), 'x');
     }
 
-    /// The serde and minicbor encoders must agree, in particular on `Bytes`
-    /// (a byte string, not an array of integers) and `Null` (not an empty array).
     #[test]
     fn serde_encoding_matches_minicbor() {
         let value = Value::Map(BTreeMap::from([
@@ -1082,8 +1161,6 @@ mod tests {
         assert_eq!(bytes, expected);
     }
 
-    /// `SeqAccess::size_hint` is the CBOR header's length, so it is wire data and
-    /// must not drive an allocation.
     #[test]
     fn oversized_declared_length_is_rejected() {
         let input = [0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
@@ -1091,5 +1168,107 @@ mod tests {
 
         let input = [0x9a, 0x3b, 0x9a, 0xca, 0x00];
         assert!(minicbor_serde::from_slice::<Value>(&input).is_err());
+    }
+
+    struct Deep(usize);
+
+    impl Serialize for Deep {
+        fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            if self.0 == 0 {
+                return s.serialize_unit();
+            }
+            let mut seq = s.serialize_seq(Some(1))?;
+            seq.serialize_element(&Deep(self.0 - 1))?;
+            seq.end()
+        }
+    }
+
+    fn deserialize_err(input: &[u8]) -> String {
+        minicbor_serde::from_slice::<Value>(input)
+            .expect_err("expected the nesting limit to reject this")
+            .to_string()
+    }
+
+    #[test]
+    fn deserialize_accepts_input_at_the_nesting_limit() {
+        let mut input = vec![0x81; MAX_NESTING - 1];
+        input.push(0xf6);
+        assert!(minicbor_serde::from_slice::<Value>(&input).is_ok());
+
+        let mut input: Vec<u8> = (0..MAX_NESTING - 1).flat_map(|_| [0xa1, 0x00]).collect();
+        input.push(0xf6);
+        assert!(minicbor_serde::from_slice::<Value>(&input).is_ok());
+    }
+
+    #[test]
+    fn deserialize_rejects_input_past_the_nesting_limit() {
+        let mut input = vec![0x81; MAX_NESTING];
+        input.push(0xf6);
+        assert!(deserialize_err(&input).contains("too many levels of nesting"));
+
+        let mut input: Vec<u8> = (0..MAX_NESTING).flat_map(|_| [0xa1, 0x00]).collect();
+        input.push(0xf6);
+        assert!(deserialize_err(&input).contains("too many levels of nesting"));
+
+        // 100k levels, which without the limit overflows the stack and aborts the process
+        assert!(deserialize_err(&vec![0x81; 100_000]).contains("too many levels of nesting"));
+        assert!(ciborium::from_reader::<Value, _>(&vec![0x81; 100_000][..]).is_err());
+    }
+
+    #[test]
+    fn deserialize_rejects_duplicate_keys() {
+        // {1: 1, 1: 2}
+        assert!(deserialize_err(&[0xa2, 0x01, 0x01, 0x01, 0x02]).contains("duplicate key"));
+    }
+
+    #[test]
+    fn from_serde_enforces_the_nesting_limit() {
+        assert!(Value::from_serde(Deep(MAX_NESTING - 1)).is_ok());
+
+        let err = Value::from_serde(Deep(MAX_NESTING)).unwrap_err();
+        assert!(
+            err.to_string().contains("too many levels of nesting"),
+            "{err}"
+        );
+
+        let err = Value::from_serde(Deep(100_000)).unwrap_err();
+        assert!(
+            err.to_string().contains("too many levels of nesting"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn deepest_value_from_serde_survives_a_cbor_round_trip() {
+        let value = Value::from_serde(Deep(MAX_NESTING - 1)).unwrap();
+        let bytes = minicbor_serde::to_vec(&value).unwrap();
+        assert_eq!(minicbor::decode::<Value>(&bytes).unwrap(), value);
+    }
+
+    #[test]
+    fn variant_wrappers_count_towards_the_limit() {
+        #[derive(Serialize)]
+        enum Wrap<T> {
+            Newtype(T),
+            Tuple(T, u8),
+            Struct { x: T },
+        }
+
+        // `{"Newtype": v}` puts the payload one level down
+        assert!(Value::from_serde(Wrap::Newtype(Deep(MAX_NESTING - 2))).is_ok());
+        assert!(Value::from_serde(Wrap::Newtype(Deep(MAX_NESTING - 1))).is_err());
+
+        // `{"Tuple": [v, _]}` and `{"Struct": {"x": v}}` put it two levels down
+        assert!(Value::from_serde(Wrap::Tuple(Deep(MAX_NESTING - 3), 0)).is_ok());
+        assert!(Value::from_serde(Wrap::Tuple(Deep(MAX_NESTING - 2), 0)).is_err());
+
+        assert!(Value::from_serde(Wrap::Struct {
+            x: Deep(MAX_NESTING - 3)
+        })
+        .is_ok());
+        assert!(Value::from_serde(Wrap::Struct {
+            x: Deep(MAX_NESTING - 2)
+        })
+        .is_err());
     }
 }
