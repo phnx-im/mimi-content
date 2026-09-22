@@ -10,6 +10,8 @@ pub(crate) mod util;
 
 pub use content_container::{Disposition, Error, MimiContent, NestedPart, Result};
 pub use message_status::{MessageStatus, MessageStatusReport, PerMessageStatus, Timestamp};
+#[cfg(feature = "serde")]
+pub use serde::ValueSerdeError;
 
 #[cfg(test)]
 fn hex_decode(input: &str) -> Vec<u8> {

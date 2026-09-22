@@ -34,11 +34,14 @@ pub enum Value {
 impl Value {
     #[cfg(feature = "serde")]
     pub fn from_serde(v: impl Serialize) -> Result<Self, ValueSerdeError> {
-        Ok(v.serialize(crate::serde::ValueSerializer).unwrap())
+        v.serialize(crate::serde::ValueSerializer)
     }
 
-    /// Deepest nesting of maps and arrays, excluding scalars.
-    pub(crate) fn depth(&self) -> usize {
+    /// Returns `true` if the depth <= `max_depth`, otherwise `false`.
+    ///
+    /// The depth is counted recursively starting at 0 incremented by 1 for maps and arrays. Scalars
+    /// are not counted.
+    pub(crate) fn within_depth(&self, max_depth: usize) -> bool {
         let mut max = 0;
         let mut stack = vec![(self, 1)];
         while let Some((value, depth)) = stack.pop() {
@@ -57,8 +60,11 @@ impl Value {
                 }
                 _ => {}
             }
+            if max > max_depth {
+                return false;
+            }
         }
-        max
+        true
     }
 
     fn rank(&self) -> u8 {
