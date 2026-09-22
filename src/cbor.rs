@@ -100,6 +100,8 @@ impl PartialEq for Value {
 
 impl Eq for Value {}
 
+// Implements the ordering of CBOR values as specified in
+// <https://www.rfc-editor.org/rfc/rfc8949.html#core-det>.
 impl Ord for Value {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
