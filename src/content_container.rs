@@ -23,6 +23,8 @@ pub enum Error {
     Encode(minicbor::encode::Error<Infallible>),
     #[error("decoding failed: {0}")]
     Decode(minicbor::decode::Error),
+    #[error("maximum nesting depth exceeded")]
+    MaxNestingDepthExceeded,
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -123,6 +125,25 @@ impl MimiContent {
         } else {
             false
         }
+    }
+
+    /// Adds or replaces an extension.
+    ///
+    /// If the value has nesting depth greater than 4, an error is returned.
+    ///
+    /// See
+    /// <https://www.ietf.org/archive/id/draft-ietf-mimi-content-09.html#name-depth-restrictions>
+    pub fn with_extension(
+        mut self,
+        name: ExtensionName,
+        value: cbor::Value,
+    ) -> Result<Self, Error> {
+        // The extension map is at level 1, we have only max 3 levels of nesting.
+        if !value.within_depth(3) {
+            return Err(Error::MaxNestingDepthExceeded);
+        }
+        self.extensions.insert(name, value);
+        Ok(self)
     }
 
     pub fn simple_markdown_message(markdown: String, random_salt: [u8; 16]) -> Self {
@@ -1589,5 +1610,50 @@ mod tests {
         let mut buf = Vec::new();
         minicbor::encode(value, &mut buf).unwrap();
         buf
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn extensions_max_depth() {
+        // {
+        //     /sender URI/ 1: "mimi://a.example/u/alice",
+        //     256: [
+        //         [h'1234', 32("http://example.com")],
+        //         [h'3456', 5771]
+        //     ]
+        // }
+        use crate::cbor::Value;
+
+        let value = Value::Map(BTreeMap::from([(
+            Value::Int(256),
+            Value::Array(vec![
+                Value::Array(vec![
+                    Value::Bytes(vec![0x12, 0x34]),
+                    Value::Text("http://example.com".into()),
+                ]),
+                Value::Array(vec![Value::Bytes(vec![0x34, 0x56]), Value::Int(5771)]),
+            ]),
+        )]));
+        MimiContent::default()
+            .with_extension(ExtensionName::Number(256), value)
+            .unwrap();
+
+        let value = Value::Map(BTreeMap::from([(
+            Value::Int(256),
+            Value::Array(vec![
+                Value::Array(vec![
+                    Value::Bytes(vec![0x12, 0x34]),
+                    // This is over the limit
+                    Value::Array(vec![
+                        Value::Int(32),
+                        Value::Text("http://example.com".into()),
+                    ]),
+                ]),
+                Value::Array(vec![Value::Bytes(vec![0x34, 0x56]), Value::Int(5771)]),
+            ]),
+        )]));
+        MimiContent::default()
+            .with_extension(ExtensionName::Number(256), value)
+            .unwrap_err();
     }
 }
