@@ -176,7 +176,7 @@ impl MimiContent {
 
     pub fn simple_markdown_message(markdown: String, random_salt: [u8; 16]) -> Self {
         Self {
-            salt: random_salt.into(),
+            salt: random_salt,
             replaces: None,
             topic_id: b"".to_vec(),
             expires: None,
