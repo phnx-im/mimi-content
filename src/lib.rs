@@ -10,20 +10,3 @@ pub(crate) mod util;
 
 pub use content_container::{Disposition, Error, MimiContent, NestedPart, Result};
 pub use message_status::{MessageStatus, MessageStatusReport, PerMessageStatus, Timestamp};
-
-#[cfg(test)]
-fn hex_decode(input: &str) -> Vec<u8> {
-    let raw = input
-        .lines()
-        .map(|l| {
-            if let Some(index) = l.find('#') {
-                &l[..index]
-            } else {
-                l
-            }
-            .replace(' ', "")
-        })
-        .collect::<String>();
-
-    hex::decode(raw).unwrap()
-}

@@ -43,26 +43,21 @@ impl Value {
     /// The depth is counted recursively starting at 0 incremented by 1 for maps and arrays. Scalars
     /// are not counted.
     pub(crate) fn within_depth(&self, max_depth: usize) -> bool {
-        let mut max = 0;
         let mut stack = vec![(self, 1)];
         while let Some((value, depth)) = stack.pop() {
             match value {
-                Value::Array(items) => {
-                    max = max.max(depth);
+                Value::Array(items) if depth <= max_depth => {
                     stack.extend(items.iter().map(|v| (v, depth + 1)));
                 }
-                Value::Map(items) => {
-                    max = max.max(depth);
+                Value::Map(items) if depth <= max_depth => {
                     stack.extend(
                         items
                             .iter()
                             .flat_map(|(k, v)| [(k, depth + 1), (v, depth + 1)]),
                     );
                 }
+                Value::Array(_) | Value::Map(_) => return false,
                 _ => {}
-            }
-            if max > max_depth {
-                return false;
             }
         }
         true
@@ -107,7 +102,8 @@ impl Ord for Value {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) if *a >= 0 && *b >= 0 => a.cmp(b),
-            (Value::Int(a), Value::Int(b)) if *a < 0 && *b < 0 => a.cmp(b).reverse(),
+            // A negative int encodes in a later major type than a non-negative one, and within the
+            // negative major type the encoded argument grows as the value shrinks.
             (Value::Int(a), Value::Int(b)) => a.cmp(b).reverse(),
             (Value::Bytes(a), Value::Bytes(b)) => a.len().cmp(&b.len()).then(a.cmp(b)),
             (Value::Text(a), Value::Text(b)) => a.len().cmp(&b.len()).then(a.cmp(b)),
@@ -193,43 +189,18 @@ fn decode_value<'b>(
             Ok(Value::Null)
         }
         Type::Array | Type::ArrayIndef => {
-            let len = d
-                .array()?
-                .map(usize::try_from)
-                .transpose()
-                .map_err(|_| decode::Error::message("array length usize overflow"))?;
+            let len = to_len(d.array()?, "array")?;
             let remaining = d.input().len().saturating_sub(d.position());
-            let cap = len.unwrap_or(0).min(remaining);
-            let mut arr = Vec::with_capacity(cap);
-            loop {
-                match len {
-                    Some(len) if arr.len() == len => break,
-                    None if d.datatype()? == Type::Break => {
-                        d.skip()?;
-                        break;
-                    }
-                    _ => {}
-                }
+            let mut arr = Vec::with_capacity(len.unwrap_or(0).min(remaining));
+            while !at_end(d, len, arr.len())? {
                 arr.push(decode_value(d, depth + 1)?);
             }
             Ok(Value::Array(arr))
         }
         Type::Map | Type::MapIndef => {
-            let len = d
-                .map()?
-                .map(usize::try_from)
-                .transpose()
-                .map_err(|_| decode::Error::message("map length usize overflow"))?;
+            let len = to_len(d.map()?, "map")?;
             let mut map = BTreeMap::new();
-            loop {
-                match len {
-                    Some(len) if map.len() == len => break,
-                    None if d.datatype()? == Type::Break => {
-                        d.skip()?;
-                        break;
-                    }
-                    _ => {}
-                }
+            while !at_end(d, len, map.len())? {
                 let k = decode_value(d, depth + 1)?;
                 let v = decode_value(d, depth + 1)?;
                 if map.insert(k, v).is_some() {
@@ -242,75 +213,66 @@ fn decode_value<'b>(
     }
 }
 
+/// The declared length of a definite-length array or map, as a `usize`.
+fn to_len(len: Option<u64>, kind: &str) -> Result<Option<usize>, decode::Error> {
+    len.map(usize::try_from)
+        .transpose()
+        .map_err(|_| decode::Error::message(format!("{kind} length usize overflow")))
+}
+
+/// Whether a container holding `read` items so far is complete, consuming the break byte of an
+/// indefinite-length one.
+fn at_end(
+    d: &mut minicbor::Decoder<'_>,
+    len: Option<usize>,
+    read: usize,
+) -> Result<bool, decode::Error> {
+    match len {
+        Some(len) => Ok(read == len),
+        None if d.datatype()? == Type::Break => {
+            d.skip()?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
 impl From<bool> for Value {
     fn from(v: bool) -> Self {
         Value::Bool(v)
     }
 }
 
-// Signed integers
-impl From<i8> for Value {
-    fn from(v: i8) -> Self {
-        Value::Int(v.into())
-    }
-}
-impl From<i16> for Value {
-    fn from(v: i16) -> Self {
-        Value::Int(v.into())
-    }
-}
-impl From<i32> for Value {
-    fn from(v: i32) -> Self {
-        Value::Int(v.into())
-    }
-}
-impl From<i64> for Value {
-    fn from(v: i64) -> Self {
-        Value::Int(v)
-    }
+macro_rules! from_primitive {
+    ($variant:ident: $($ty:ty),*) => {
+        $(
+            impl From<$ty> for Value {
+                fn from(v: $ty) -> Self {
+                    Value::$variant(v.into())
+                }
+            }
+        )*
+    };
 }
 
-impl From<u8> for Value {
-    fn from(v: u8) -> Self {
-        Value::Int(v.into())
-    }
-}
-impl From<u16> for Value {
-    fn from(v: u16) -> Self {
-        Value::Int(v.into())
-    }
-}
-impl From<u32> for Value {
-    fn from(v: u32) -> Self {
-        Value::Int(v.into())
-    }
-}
-impl TryFrom<u64> for Value {
-    type Error = TryFromIntError;
+from_primitive!(Int: i8, i16, i32, i64, u8, u16, u32);
+from_primitive!(Float: f32, f64);
 
-    fn try_from(v: u64) -> Result<Self, Self::Error> {
-        Ok(Value::Int(v.try_into()?))
-    }
-}
-impl TryFrom<usize> for Value {
-    type Error = TryFromIntError;
+macro_rules! try_from_primitive {
+    ($($ty:ty),*) => {
+        $(
+            impl TryFrom<$ty> for Value {
+                type Error = TryFromIntError;
 
-    fn try_from(v: usize) -> Result<Self, Self::Error> {
-        Ok(Value::Int(v.try_into()?))
-    }
+                fn try_from(v: $ty) -> Result<Self, Self::Error> {
+                    Ok(Value::Int(v.try_into()?))
+                }
+            }
+        )*
+    };
 }
 
-// Floats
-impl From<f32> for Value {
-    fn from(v: f32) -> Self {
-        Value::Float(v.into())
-    }
-}
-impl From<f64> for Value {
-    fn from(v: f64) -> Self {
-        Value::Float(v)
-    }
-}
+try_from_primitive!(u64, usize);
 
 // Strings
 impl From<String> for Value {

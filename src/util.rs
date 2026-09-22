@@ -84,6 +84,22 @@ macro_rules! open_enum {
                 Ok(Self::from(repr))
             }
         }
+
+        #[cfg(feature = "serde")]
+        impl ::serde::Serialize for $ty {
+            fn serialize<S: ::serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                let repr: $repr = (*self).into();
+                ::serde::Serialize::serialize(&repr, s)
+            }
+        }
+
+        #[cfg(feature = "serde")]
+        impl<'de> ::serde::Deserialize<'de> for $ty {
+            fn deserialize<D: ::serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                let repr: $repr = ::serde::Deserialize::deserialize(d)?;
+                Ok(Self::from(repr))
+            }
+        }
     };
 
     (@collect $head:tt $collected:tt $($rest:tt)*) => {
@@ -111,4 +127,14 @@ pub(crate) fn decode_bytes(
         bytes.extend_from_slice(chunk?);
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+pub(crate) fn hex_decode(input: &str) -> Vec<u8> {
+    let raw: String = input
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or(line).replace(' ', ""))
+        .collect();
+
+    hex::decode(raw).unwrap()
 }

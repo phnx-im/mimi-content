@@ -98,7 +98,7 @@ mod tests {
 
         // TODO: Draft has wrong message ids
         // Taken from MIMI content format draft
-        let target = crate::hex_decode(
+        let target = crate::util::hex_decode(
             r#"
             84                                      # array(4)
                82                                   # array(2)

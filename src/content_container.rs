@@ -38,19 +38,16 @@ impl std::error::Error for Error {}
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-#[derive(minicbor::Encode, minicbor::Decode, PartialEq, Debug, Clone)]
+#[derive(minicbor::Encode, minicbor::Decode, Default, PartialEq, Debug, Clone)]
 #[cbor(array)]
 pub struct MimiContentV1 {
-    #[cbor(n(0))]
-    #[cbor(with = "minicbor::bytes")]
+    #[cbor(n(0), with = "minicbor::bytes")]
     pub replaces: Option<Vec<u8>>,
-    #[cbor(n(1))]
-    #[cbor(with = "minicbor::bytes")]
+    #[cbor(n(1), with = "minicbor::bytes")]
     pub topic_id: Vec<u8>,
     #[cbor(n(2))]
     pub expires: Option<Expiration>,
-    #[cbor(n(3))]
-    #[cbor(with = "minicbor::bytes")]
+    #[cbor(n(3), with = "minicbor::bytes")]
     pub in_reply_to: Option<Vec<u8>>,
     #[cbor(n(4))]
     pub last_seen: Vec<ByteVec>,
@@ -58,23 +55,6 @@ pub struct MimiContentV1 {
     pub extensions: BTreeMap<ExtensionName, cbor::Value>,
     #[cbor(n(6))]
     pub nested_part: NestedPart,
-}
-
-impl Default for MimiContentV1 {
-    fn default() -> Self {
-        Self {
-            replaces: None,
-            topic_id: Vec::new(),
-            expires: None,
-            in_reply_to: None,
-            last_seen: Vec::new(),
-            extensions: BTreeMap::new(),
-            nested_part: NestedPart::NullPart {
-                disposition: Disposition::Unspecified,
-                language: String::new(),
-            },
-        }
-    }
 }
 
 impl MimiContentV1 {
@@ -94,19 +74,15 @@ impl MimiContentV1 {
 #[derive(minicbor::Encode, minicbor::Decode, Default, PartialEq, Debug, Clone)]
 #[cbor(array)]
 pub struct MimiContent {
-    #[cbor(n(0))]
-    #[cbor(with = "minicbor::bytes")]
+    #[cbor(n(0), with = "minicbor::bytes")]
     pub salt: Vec<u8>,
-    #[cbor(n(1))]
-    #[cbor(with = "minicbor::bytes")]
+    #[cbor(n(1), with = "minicbor::bytes")]
     pub replaces: Option<Vec<u8>>,
-    #[cbor(n(2))]
-    #[cbor(with = "minicbor::bytes")]
+    #[cbor(n(2), with = "minicbor::bytes")]
     pub topic_id: Vec<u8>,
     #[cbor(n(3))]
     pub expires: Option<Expiration>, // TODO: RFC does not allow null
-    #[cbor(n(4))]
-    #[cbor(with = "minicbor::bytes")]
+    #[cbor(n(4), with = "minicbor::bytes")]
     pub in_reply_to: Option<Vec<u8>>, // TODO: Enforce this is a message id
     #[cbor(n(5))]
     pub extensions: BTreeMap<ExtensionName, cbor::Value>, // TODO: Enforce max sizes
@@ -187,8 +163,9 @@ impl MimiContent {
                 .collect(),
         };
 
+        let content = report.serialize()?;
         Ok((
-            report.clone(),
+            report,
             Self {
                 salt: random_salt.to_vec(),
                 replaces: None,
@@ -200,7 +177,7 @@ impl MimiContent {
                     disposition: Disposition::Unspecified,
                     language: "".to_owned(),
                     content_type: "application/mimi-message-status".to_owned(),
-                    content: report.serialize()?,
+                    content,
                 },
             },
         ))
@@ -214,8 +191,8 @@ impl MimiContent {
                 content_type,
                 ..
             } if content_type == "text/markdown" => {
-                let markdown = String::from_utf8(content.clone()).map_err(|_| Error::NotUtf8)?;
-                Ok(markdown)
+                let markdown = str::from_utf8(content).map_err(|_| Error::NotUtf8)?;
+                Ok(markdown.to_owned())
             }
             _ => Err(Error::UnsupportedContentType),
         }
@@ -288,10 +265,11 @@ open_enum! {
     /// See [Named Information Hash Algorithm Registry].
     ///
     /// [Named Information Hash Algorithm Registry]: https://www.iana.org/assignments/named-information/named-information.xhtml
-    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    #[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
     #[non_exhaustive]
     #[allow(non_camel_case_types)]
     pub enum HashAlgorithm: u8 {
+        #[default]
         Unspecified = 0,
         /// [RFC6920](https://www.rfc-editor.org/rfc/rfc6920.html)
         Sha256 = 1,
@@ -319,13 +297,6 @@ open_enum! {
         Sha3_512 = 12,
         /// Custom hash algorithm
         Custom(_),
-    }
-}
-
-#[allow(clippy::derivable_impls)]
-impl Default for HashAlgorithm {
-    fn default() -> Self {
-        Self::Unspecified
     }
 }
 
@@ -377,10 +348,10 @@ impl Default for NestedPart {
 impl NestedPart {
     pub fn disposition(&self) -> Disposition {
         match self {
-            NestedPart::NullPart { disposition, .. } => *disposition,
-            NestedPart::SinglePart { disposition, .. } => *disposition,
-            NestedPart::ExternalPart { disposition, .. } => *disposition,
-            NestedPart::MultiPart { disposition, .. } => *disposition,
+            NestedPart::NullPart { disposition, .. }
+            | NestedPart::SinglePart { disposition, .. }
+            | NestedPart::ExternalPart { disposition, .. }
+            | NestedPart::MultiPart { disposition, .. } => *disposition,
         }
     }
 
@@ -639,7 +610,7 @@ open_enum! {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::{cbor, hex_decode};
+    use crate::{cbor, util::hex_decode};
 
     use super::*;
 
