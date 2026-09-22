@@ -6,7 +6,7 @@ use minicbor::{bytes::ByteVec, data::Type};
 use sha2::{Digest, Sha256};
 #[cfg(test)]
 use std::str::FromStr;
-use std::{collections::BTreeMap, convert::Infallible, fmt};
+use std::{collections::BTreeMap, convert::Infallible, fmt, ops::Deref};
 
 use crate::{
     cbor,
@@ -92,6 +92,14 @@ impl MimiId {
 impl From<[u8; 32]> for MimiId {
     fn from(bytes: [u8; 32]) -> Self {
         Self(bytes)
+    }
+}
+
+impl Deref for MimiId {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
