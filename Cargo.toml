@@ -14,7 +14,7 @@ serde = ["dep:serde", "serde_bytes"]
 
 [dependencies]
 minicbor = { version = "2.2.1", features = ["std", "derive"] }
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 serde = { version = "1.0.228", optional = true }
 serde_bytes = { version = "0.11.19", optional = true }
 
@@ -27,4 +27,4 @@ serde = { version = "1.0.228", features = ["derive"] }
 ciborium = "0.2.2"
 criterion = "0.8.2"
 hex = "0.4.3"
-minicbor-serde = { version = "0.6.2", features = ["std"] }
+minicbor-serde = { version = "0.7.1", features = ["std"] }
