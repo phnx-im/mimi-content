@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::{collections::BTreeMap, fmt};
+use std::{borrow::Cow, collections::BTreeMap, fmt};
 
 use ::serde::{
     de::{self, DeserializeSeed, Visitor},
@@ -45,9 +45,7 @@ impl ValueSerializer {
     /// A serializer for a value nested `depth` levels below the root.
     fn nested(depth: usize) -> Result<Self, ValueSerdeError> {
         if depth >= MAX_NESTING {
-            return Err(ValueSerdeError {
-                msg: "too many levels of nesting".into(),
-            });
+            return Err(ValueSerdeError::new("too many levels of nesting"));
         }
         Ok(Self { depth })
     }
@@ -56,7 +54,13 @@ impl ValueSerializer {
 /// An error that can be returned when serializing a serde value to [`Value`].
 #[derive(Debug)]
 pub struct ValueSerdeError {
-    msg: String,
+    msg: Cow<'static, str>,
+}
+
+impl ValueSerdeError {
+    fn new(msg: impl Into<Cow<'static, str>>) -> Self {
+        Self { msg: msg.into() }
+    }
 }
 
 impl fmt::Display for ValueSerdeError {
@@ -69,9 +73,7 @@ impl std::error::Error for ValueSerdeError {}
 
 impl serde::ser::Error for ValueSerdeError {
     fn custom<T: fmt::Display>(msg: T) -> Self {
-        ValueSerdeError {
-            msg: msg.to_string(),
-        }
+        ValueSerdeError::new(msg.to_string())
     }
 }
 
@@ -120,9 +122,9 @@ impl Serializer for ValueSerializer {
     }
 
     fn serialize_u64(self, v: u64) -> Result<Self::Ok, Self::Error> {
-        let v = v.try_into().map_err(|_| ValueSerdeError {
-            msg: "u64 out of range".into(),
-        })?;
+        let v = v
+            .try_into()
+            .map_err(|_| ValueSerdeError::new("u64 out of range"))?;
         Ok(Value::Int(v))
     }
 
@@ -280,50 +282,35 @@ pub(crate) struct ValueSeqSerializer {
     items: Vec<Value>,
 }
 
-impl serde::ser::SerializeSeq for ValueSeqSerializer {
-    type Ok = Value;
-    type Error = ValueSerdeError;
-
-    fn serialize_element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
+impl ValueSeqSerializer {
+    fn push<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), ValueSerdeError> {
         self.items
             .push(value.serialize(ValueSerializer::nested(self.depth + 1)?)?);
         Ok(())
     }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::Array(self.items))
-    }
 }
 
-impl serde::ser::SerializeTuple for ValueSeqSerializer {
-    type Ok = Value;
-    type Error = ValueSerdeError;
+/// The sequence-like `serde` traits differ only in the name of their element method.
+macro_rules! impl_serialize_seq {
+    ($trait:ident :: $method:ident) => {
+        impl serde::ser::$trait for ValueSeqSerializer {
+            type Ok = Value;
+            type Error = ValueSerdeError;
 
-    fn serialize_element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
-        self.items
-            .push(value.serialize(ValueSerializer::nested(self.depth + 1)?)?);
-        Ok(())
-    }
+            fn $method<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
+                self.push(value)
+            }
 
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::Array(self.items))
-    }
+            fn end(self) -> Result<Self::Ok, Self::Error> {
+                Ok(Value::Array(self.items))
+            }
+        }
+    };
 }
 
-impl serde::ser::SerializeTupleStruct for ValueSeqSerializer {
-    type Ok = Value;
-    type Error = ValueSerdeError;
-
-    fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
-        self.items
-            .push(value.serialize(ValueSerializer::nested(self.depth + 1)?)?);
-        Ok(())
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::Array(self.items))
-    }
-}
+impl_serialize_seq!(SerializeSeq::serialize_element);
+impl_serialize_seq!(SerializeTuple::serialize_element);
+impl_serialize_seq!(SerializeTupleStruct::serialize_field);
 
 pub(crate) struct ValueMapSerializer {
     depth: usize,
@@ -341,29 +328,20 @@ impl serde::ser::SerializeMap for ValueMapSerializer {
     }
 
     fn serialize_value<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Self::Error> {
-        let key = self.next_key.take().ok_or_else(|| ValueSerdeError {
-            msg: "serialize_value before serialize_key".into(),
-        })?;
-        if self
-            .items
-            .insert(
-                key,
-                value.serialize(ValueSerializer::nested(self.depth + 1)?)?,
-            )
-            .is_some()
-        {
-            return Err(ValueSerdeError {
-                msg: "duplicate key".into(),
-            });
-        }
-        Ok(())
+        let key = self
+            .next_key
+            .take()
+            .ok_or_else(|| ValueSerdeError::new("serialize_value before serialize_key"))?;
+        insert_unique(
+            &mut self.items,
+            key,
+            value.serialize(ValueSerializer::nested(self.depth + 1)?)?,
+        )
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
         if self.next_key.is_some() {
-            return Err(ValueSerdeError {
-                msg: "missing value for key".into(),
-            });
+            return Err(ValueSerdeError::new("missing value for key"));
         }
         Ok(Value::Map(self.items))
     }
@@ -378,19 +356,11 @@ impl serde::ser::SerializeStruct for ValueMapSerializer {
         key: &'static str,
         value: &T,
     ) -> Result<(), Self::Error> {
-        if self
-            .items
-            .insert(
-                Value::Text(key.into()),
-                value.serialize(ValueSerializer::nested(self.depth + 1)?)?,
-            )
-            .is_some()
-        {
-            return Err(ValueSerdeError {
-                msg: "duplicate key".into(),
-            });
-        }
-        Ok(())
+        insert_unique(
+            &mut self.items,
+            Value::Text(key.into()),
+            value.serialize(ValueSerializer::nested(self.depth + 1)?)?,
+        )
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
@@ -434,24 +404,27 @@ impl serde::ser::SerializeStructVariant for ValueStructVariantSerializer {
         key: &'static str,
         value: &T,
     ) -> Result<(), Self::Error> {
-        if self
-            .items
-            .insert(
-                Value::Text(key.into()),
-                value.serialize(ValueSerializer::nested(self.depth + 1)?)?,
-            )
-            .is_some()
-        {
-            return Err(ValueSerdeError {
-                msg: "duplicate key".into(),
-            });
-        }
-        Ok(())
+        insert_unique(
+            &mut self.items,
+            Value::Text(key.into()),
+            value.serialize(ValueSerializer::nested(self.depth + 1)?)?,
+        )
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
         Ok(wrap_variant(self.variant, Value::Map(self.items)))
     }
+}
+
+fn insert_unique(
+    items: &mut BTreeMap<Value, Value>,
+    key: Value,
+    value: Value,
+) -> Result<(), ValueSerdeError> {
+    if items.insert(key, value).is_some() {
+        return Err(ValueSerdeError::new("duplicate key"));
+    }
+    Ok(())
 }
 
 fn wrap_variant(variant: &'static str, value: Value) -> Value {
@@ -483,35 +456,14 @@ impl<'de> DeserializeSeed<'de> for ValueSeed {
             fn visit_bool<E: de::Error>(self, v: bool) -> Result<Value, E> {
                 Ok(Value::Bool(v))
             }
-            fn visit_i8<E: de::Error>(self, v: i8) -> Result<Value, E> {
-                Ok(Value::Int(v.into()))
-            }
-            fn visit_i16<E: de::Error>(self, v: i16) -> Result<Value, E> {
-                Ok(Value::Int(v.into()))
-            }
-            fn visit_i32<E: de::Error>(self, v: i32) -> Result<Value, E> {
-                Ok(Value::Int(v.into()))
-            }
             fn visit_i64<E: de::Error>(self, v: i64) -> Result<Value, E> {
                 Ok(Value::Int(v))
-            }
-            fn visit_u8<E: de::Error>(self, v: u8) -> Result<Value, E> {
-                Ok(Value::Int(v.into()))
-            }
-            fn visit_u16<E: de::Error>(self, v: u16) -> Result<Value, E> {
-                Ok(Value::Int(v.into()))
-            }
-            fn visit_u32<E: de::Error>(self, v: u32) -> Result<Value, E> {
-                Ok(Value::Int(v.into()))
             }
             fn visit_u64<E: de::Error>(self, v: u64) -> Result<Value, E> {
                 Ok(Value::Int(
                     v.try_into()
                         .map_err(|_| de::Error::custom("u64 out of range"))?,
                 ))
-            }
-            fn visit_f32<E: de::Error>(self, v: f32) -> Result<Value, E> {
-                Ok(Value::Float(v.into()))
             }
             fn visit_f64<E: de::Error>(self, v: f64) -> Result<Value, E> {
                 Ok(Value::Float(v))
@@ -608,26 +560,8 @@ impl<'de> Deserialize<'de> for ExtensionName {
                 f.write_str("a string or integer")
             }
 
-            fn visit_i8<E: de::Error>(self, v: i8) -> Result<ExtensionName, E> {
-                Ok(ExtensionName::Number(v as i64))
-            }
-            fn visit_i16<E: de::Error>(self, v: i16) -> Result<ExtensionName, E> {
-                Ok(ExtensionName::Number(v as i64))
-            }
-            fn visit_i32<E: de::Error>(self, v: i32) -> Result<ExtensionName, E> {
-                Ok(ExtensionName::Number(v as i64))
-            }
             fn visit_i64<E: de::Error>(self, v: i64) -> Result<ExtensionName, E> {
                 Ok(ExtensionName::Number(v))
-            }
-            fn visit_u8<E: de::Error>(self, v: u8) -> Result<ExtensionName, E> {
-                Ok(ExtensionName::Number(v as i64))
-            }
-            fn visit_u16<E: de::Error>(self, v: u16) -> Result<ExtensionName, E> {
-                Ok(ExtensionName::Number(v as i64))
-            }
-            fn visit_u32<E: de::Error>(self, v: u32) -> Result<ExtensionName, E> {
-                Ok(ExtensionName::Number(v as i64))
             }
             fn visit_u64<E: de::Error>(self, v: u64) -> Result<ExtensionName, E> {
                 let number = i64::try_from(v)
@@ -941,35 +875,6 @@ impl<'de> Deserialize<'de> for NestedPart {
         deserializer.deserialize_seq(NestedPartVisitor)
     }
 }
-
-macro_rules! impl_serde_num_enum {
-    ($ty:ty, $repr:ty) => {
-        impl ::serde::Serialize for $ty {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: ::serde::Serializer,
-            {
-                let repr: $repr = (*self).into();
-                repr.serialize(serializer)
-            }
-        }
-
-        impl<'de> ::serde::Deserialize<'de> for $ty {
-            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-            where
-                D: ::serde::Deserializer<'de>,
-            {
-                let value: $repr = Deserialize::deserialize(deserializer)?;
-                Ok(Self::from(value))
-            }
-        }
-    };
-}
-
-impl_serde_num_enum!(HashAlgorithm, u8);
-impl_serde_num_enum!(EncryptionAlgorithm, u16);
-impl_serde_num_enum!(Disposition, u8);
-impl_serde_num_enum!(PartSemantics, u8);
 
 #[cfg(test)]
 mod tests {
