@@ -74,7 +74,25 @@ impl MimiContentV1 {
     }
 }
 
-#[derive(minicbor::Encode, minicbor::Decode, Default, PartialEq, Debug, Clone)]
+/// Message Identifier calculated from the Group ID, sender's User ID and Mimi Content.
+///
+/// The identifier is stable between different devices and is used to identify distributed
+/// messages.
+///
+/// See <https://www.ietf.org/archive/id/draft-ietf-mimi-content-06.html#section-3.3>
+#[derive(
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Debug,
+    Clone,
+    Copy,
+    minicbor::Encode,
+    minicbor::Decode,
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cbor(transparent)]
 pub struct MimiId(
@@ -84,13 +102,25 @@ pub struct MimiId(
 );
 
 impl MimiId {
-    pub fn as_bytes(&self) -> &[u8; 32] {
+    pub fn as_slice(&self) -> &[u8] {
         &self.0
+    }
+
+    pub fn into_inner(&self) -> [u8; 32] {
+        self.0
     }
 
     #[cfg(test)]
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
+    }
+}
+
+impl TryFrom<&[u8]> for MimiId {
+    type Error = std::array::TryFromSliceError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self(bytes.try_into()?))
     }
 }
 
@@ -197,7 +227,7 @@ impl MimiContent {
     }
 
     pub fn simple_receipt(
-        targets: &[&[u8]],
+        targets: &[MimiId],
         random_salt: [u8; 16],
         status: MessageStatus,
     ) -> Result<(MessageStatusReport, Self)> {
@@ -205,7 +235,7 @@ impl MimiContent {
             statuses: targets
                 .iter()
                 .map(|target| PerMessageStatus {
-                    mimi_id: target.to_vec(),
+                    mimi_id: *target,
                     status,
                 })
                 .collect(),
@@ -1424,7 +1454,7 @@ mod tests {
                         b"mimi://example.com/r/engineering_team"
                     )
                     .unwrap()
-                    .as_bytes()
+                    .into_inner()
             ),
             "015c0469c52da0938c27cfa16702e27735a4729746be5f64bc5838f754828464"
         );

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::{util::open_enum, Error, Result};
+use crate::{util::open_enum, Error, MimiId, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageStatusReport {
@@ -31,8 +31,7 @@ pub struct Timestamp(#[cbor(tag(62))] pub u64);
 #[cbor(array)]
 pub struct PerMessageStatus {
     #[cbor(n(0))]
-    #[cbor(with = "minicbor::bytes")]
-    pub mimi_id: Vec<u8>,
+    pub mimi_id: MimiId,
     #[cbor(n(1))]
     pub status: MessageStatus,
 }
