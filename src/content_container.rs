@@ -4,7 +4,7 @@
 
 use minicbor::{bytes::ByteVec, data::Type};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, convert::Infallible};
+use std::{collections::BTreeMap, convert::Infallible, fmt};
 
 use crate::{
     cbor,
@@ -12,20 +12,29 @@ use crate::{
     MessageStatus, MessageStatusReport, PerMessageStatus,
 };
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
-    #[error("unsupported content type")]
     UnsupportedContentType,
-    #[error("not UTF-8")]
     NotUtf8,
-    #[error("encoding failed: {0}")]
     Encode(minicbor::encode::Error<Infallible>),
-    #[error("decoding failed: {0}")]
     Decode(minicbor::decode::Error),
-    #[error("maximum nesting depth exceeded")]
     MaxNestingDepthExceeded,
 }
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::UnsupportedContentType => write!(f, "unsupported content type"),
+            Error::NotUtf8 => write!(f, "not UTF-8"),
+            Error::Encode(e) => write!(f, "encoding failed: {e}"),
+            Error::Decode(e) => write!(f, "decoding failed: {e}"),
+            Error::MaxNestingDepthExceeded => write!(f, "maximum nesting depth exceeded"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 

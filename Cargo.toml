@@ -15,7 +15,6 @@ serde = ["dep:serde", "serde_bytes"]
 [dependencies]
 minicbor = { version = "2.2.1", features = ["std", "derive"] }
 sha2 = "0.10.9"
-thiserror = "2.0.11"
 serde = { version = "1.0.228", optional = true }
 serde_bytes = { version = "0.11.19", optional = true }
 
