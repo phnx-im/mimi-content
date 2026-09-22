@@ -4,7 +4,7 @@
 
 use num_enum::{FromPrimitive, IntoPrimitive};
 
-use crate::{impl_encode_decode_num_enum, Error, Result};
+use crate::{util::impl_encode_decode_num_enum, Error, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageStatusReport {

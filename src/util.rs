@@ -4,7 +4,6 @@
 
 /// Implement `minicbor::Encode` and `minicbor::Decode` for an enum that implements
 /// `num_enum::IntoPrimitive` and `num_from::FromPrimitive`.
-#[macro_export]
 macro_rules! impl_encode_decode_num_enum {
     ($ty:ty, $repr:ty) => {
         impl<C> ::minicbor::Encode<C> for $ty {
@@ -30,6 +29,8 @@ macro_rules! impl_encode_decode_num_enum {
         }
     };
 }
+
+pub(crate) use impl_encode_decode_num_enum;
 
 /// Decode a CBOR text string, concatenating the chunks of an indefinite-length string.
 pub(crate) fn decode_text(

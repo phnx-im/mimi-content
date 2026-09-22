@@ -8,8 +8,9 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, convert::Infallible};
 
 use crate::{
-    cbor, impl_encode_decode_num_enum, util::decode_text, MessageStatus, MessageStatusReport,
-    PerMessageStatus,
+    cbor,
+    util::{decode_text, impl_encode_decode_num_enum},
+    MessageStatus, MessageStatusReport, PerMessageStatus,
 };
 
 #[derive(Debug, thiserror::Error)]
