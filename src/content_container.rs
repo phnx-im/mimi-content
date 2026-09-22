@@ -30,7 +30,7 @@ pub enum Error {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-#[derive(minicbor_derive::Encode, minicbor_derive::Decode, PartialEq, Debug, Clone)]
+#[derive(minicbor::Encode, minicbor::Decode, PartialEq, Debug, Clone)]
 #[cbor(array)]
 pub struct MimiContentV1 {
     #[cbor(n(0))]
@@ -83,7 +83,7 @@ impl MimiContentV1 {
     }
 }
 
-#[derive(minicbor_derive::Encode, minicbor_derive::Decode, Default, PartialEq, Debug, Clone)]
+#[derive(minicbor::Encode, minicbor::Decode, Default, PartialEq, Debug, Clone)]
 #[cbor(array)]
 pub struct MimiContent {
     #[cbor(n(0))]
@@ -265,7 +265,7 @@ impl<C> minicbor::Decode<'_, C> for ExtensionName {
     }
 }
 
-#[derive(minicbor_derive::Encode, minicbor_derive::Decode, PartialEq, Eq, Debug, Clone)]
+#[derive(minicbor::Encode, minicbor::Decode, PartialEq, Eq, Debug, Clone)]
 #[cbor(array)]
 pub struct Expiration {
     #[cbor(n(0))]

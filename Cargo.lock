@@ -328,7 +328,6 @@ dependencies = [
  "criterion",
  "hex",
  "minicbor",
- "minicbor-derive",
  "minicbor-serde",
  "num_enum",
  "serde",
