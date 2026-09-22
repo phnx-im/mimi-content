@@ -53,6 +53,7 @@ impl ValueSerializer {
     }
 }
 
+/// An error that can be returned when serializing a serde value to [`Value`].
 #[derive(Debug)]
 pub struct ValueSerdeError {
     msg: String,

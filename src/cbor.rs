@@ -8,7 +8,7 @@ use serde::Serialize;
 use std::{borrow::Cow, cmp::Ordering, collections::BTreeMap, num::TryFromIntError};
 
 #[cfg(feature = "serde")]
-use crate::serde::ValueSerdeError;
+pub use crate::serde::ValueSerdeError;
 use crate::util::{decode_bytes, decode_text};
 
 /// A sum type covering the CBOR values you actually need.
@@ -18,8 +18,8 @@ use crate::util::{decode_bytes, decode_text};
 /// The ordering of the Value is based on the canonical key order (RFC 8949 §4.2.1: keys sorted
 /// bytewise on their encodings).
 ///
-/// A `Value` has a maximum nesting depth of 32, enforced on every path that builds one from
-/// input we do not control: `minicbor::decode`, `serde::Deserialize` and [`Value::from_serde`].
+/// A `Value` has a maximum nesting depth of 32, enforced on every path that builds one from input
+/// we do not control: `minicbor::decode`, `serde::Deserialize` and `Value::from_serde`.
 #[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
