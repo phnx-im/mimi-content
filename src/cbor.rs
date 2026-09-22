@@ -4,7 +4,7 @@
 
 use minicbor::{data::Type, decode};
 #[cfg(feature = "serde")]
-use serde::Serialize;
+use serde::{de::DeserializeOwned, Serialize};
 use std::{borrow::Cow, cmp::Ordering, collections::BTreeMap, num::TryFromIntError};
 
 #[cfg(feature = "serde")]
@@ -38,10 +38,16 @@ impl Value {
         v.serialize(crate::serde::ValueSerializer::root())
     }
 
+    #[cfg(feature = "serde")]
+    pub fn into_serde<T: DeserializeOwned>(self) -> Result<T, ValueSerdeError> {
+        T::deserialize(crate::serde::ValueDeserializer::new(self))
+    }
+
     /// Returns `true` if the depth <= `max_depth`, otherwise `false`.
     ///
     /// The depth is counted recursively starting at 0 incremented by 1 for maps and arrays. Scalars
     /// are not counted.
+    #[cfg(feature = "serde")]
     pub(crate) fn within_depth(&self, max_depth: usize) -> bool {
         let mut stack = vec![(self, 1)];
         while let Some((value, depth)) = stack.pop() {
