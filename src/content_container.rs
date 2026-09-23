@@ -6,7 +6,7 @@ use minicbor::{bytes::ByteVec, data::Type};
 #[cfg(feature = "serde")]
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, convert::Infallible, fmt};
+use std::{cmp::Ordering, collections::BTreeMap, convert::Infallible, fmt};
 
 use crate::{
     cbor,
@@ -229,10 +229,30 @@ impl MimiContent {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Clone, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub enum ExtensionName {
     Text(String),
     Number(i64),
+}
+
+// Ordering per RFC 8949 4.2.1
+impl Ord for ExtensionName {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use ExtensionName::*;
+        match (self, other) {
+            (Number(a), Number(b)) if *a >= 0 && *b >= 0 => a.cmp(b),
+            (Number(a), Number(b)) => a.cmp(b).reverse(),
+            (Text(a), Text(b)) => a.len().cmp(&b.len()).then(a.cmp(b)),
+            (Number(_), Text(_)) => Ordering::Less,
+            (Text(_), Number(_)) => Ordering::Greater,
+        }
+    }
+}
+
+impl PartialOrd for ExtensionName {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl<C> minicbor::Encode<C> for ExtensionName {
