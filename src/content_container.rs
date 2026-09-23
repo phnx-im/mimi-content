@@ -6,7 +6,7 @@ use minicbor::{bytes::ByteVec, data::Type};
 #[cfg(feature = "serde")]
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, convert::Infallible, fmt};
+use std::{cmp::Ordering, collections::BTreeMap, convert::Infallible, fmt};
 
 use crate::{
     cbor,
@@ -245,10 +245,30 @@ impl MimiContent {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Clone, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub enum ExtensionName {
     Text(String),
     Number(i64),
+}
+
+// Ordering per RFC 8949 4.2.1
+impl Ord for ExtensionName {
+    fn cmp(&self, other: &Self) -> Ordering {
+        use ExtensionName::*;
+        match (self, other) {
+            (Number(a), Number(b)) if *a >= 0 && *b >= 0 => a.cmp(b),
+            (Number(a), Number(b)) => a.cmp(b).reverse(),
+            (Text(a), Text(b)) => a.len().cmp(&b.len()).then(a.cmp(b)),
+            (Number(_), Text(_)) => Ordering::Less,
+            (Text(_), Number(_)) => Ordering::Greater,
+        }
+    }
+}
+
+impl PartialOrd for ExtensionName {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl<C> minicbor::Encode<C> for ExtensionName {
@@ -1618,6 +1638,39 @@ mod tests {
         let mut buf = Vec::new();
         minicbor::encode(value, &mut buf).unwrap();
         buf
+    }
+
+    /// RFC 8949 4.2.1 orders keys bytewise on their encodings.
+    #[test]
+    fn extension_name_order_is_bytewise_on_encoding() {
+        let names = [
+            ExtensionName::Number(0),
+            ExtensionName::Number(1),
+            ExtensionName::Number(23),
+            ExtensionName::Number(24),
+            ExtensionName::Number(255),
+            ExtensionName::Number(256),
+            ExtensionName::Number(i64::MAX),
+            ExtensionName::Number(-1),
+            ExtensionName::Number(-2),
+            ExtensionName::Number(-24),
+            ExtensionName::Number(-25),
+            ExtensionName::Number(i64::MIN),
+            ExtensionName::Text("".to_owned()),
+            ExtensionName::Text("z".to_owned()),
+            ExtensionName::Text("aa".to_owned()),
+            ExtensionName::Text("a".repeat(23)),
+            ExtensionName::Text("a".repeat(24)),
+        ];
+
+        let mut by_ord = names.to_vec();
+        by_ord.reverse();
+        by_ord.sort();
+
+        let mut by_encoding = names.to_vec();
+        by_encoding.sort_by_key(|name| encode_value(name));
+
+        assert_eq!(by_ord, by_encoding);
     }
 
     #[cfg(feature = "serde")]
