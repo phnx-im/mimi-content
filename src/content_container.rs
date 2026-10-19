@@ -141,11 +141,27 @@ impl MimiContent {
         Ok(self)
     }
 
+    /// Gets a typed extension from the content, if any.
+    ///
+    /// Note: the value to deserialize the extension from is cloned.
     #[cfg(feature = "serde")]
     pub fn extension<T: DeserializeOwned>(&self, name: &ExtensionName) -> Result<Option<T>, Error> {
         self.extensions
             .get(name)
             .cloned()
+            .map(cbor::Value::into_serde)
+            .transpose()
+            .map_err(Error::Serde)
+    }
+
+    /// Converts this content into an extension, if any.
+    #[cfg(feature = "serde")]
+    pub fn into_extension<T: DeserializeOwned>(
+        mut self,
+        name: &ExtensionName,
+    ) -> Result<Option<T>, Error> {
+        self.extensions
+            .remove(name)
             .map(cbor::Value::into_serde)
             .transpose()
             .map_err(Error::Serde)
