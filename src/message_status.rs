@@ -23,10 +23,6 @@ impl MessageStatusReport {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, minicbor::Encode, minicbor::Decode)]
-#[cbor(transparent)]
-pub struct Timestamp(#[cbor(tag(62))] pub u64);
-
 #[derive(minicbor::Encode, minicbor::Decode, Debug, Clone, PartialEq, Eq)]
 #[cbor(array)]
 pub struct PerMessageStatus {

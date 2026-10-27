@@ -186,6 +186,9 @@ fn decode_value<'b>(
                 .map_err(|_| decode::Error::message("u64 out of range"))?,
         )),
         Type::I8 | Type::I16 | Type::I32 | Type::I64 => Ok(Value::Int(d.i64()?)),
+        // Floats are always encoded as f64, but the half and single widths are decoded so that
+        // deterministically encoded input round-trips.
+        Type::F16 => Ok(Value::Float(d.f16()?.into())),
         Type::F32 => Ok(Value::Float(d.f32()?.into())),
         Type::F64 => Ok(Value::Float(d.f64()?)),
         Type::String | Type::StringIndef => Ok(Value::Text(decode_text(d)?.into())),
@@ -378,6 +381,24 @@ mod tests {
 
         let expected = Value::Map(BTreeMap::from([("key".to_owned().into(), Value::Int(7))]));
         assert_eq!(decode(&e.into_writer()), expected);
+    }
+
+    /// Floats of every width decode. Encoding always uses f64, so the bytes a message hashes to
+    /// do not depend on which widths the encoder could shorten.
+    #[test]
+    fn floats_decode_at_every_width_and_encode_as_f64() {
+        let cases: [(&[u8], f64); 3] = [
+            (&[0xf9, 0x3e, 0x00], 1.5),
+            (&[0xfa, 0x3f, 0xc0, 0x00, 0x00], 1.5),
+            (&[0xfb, 0x3f, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], 1.5),
+        ];
+        for (input, value) in cases {
+            assert_eq!(decode(input), Value::Float(value));
+        }
+
+        let mut buf = Vec::new();
+        minicbor::encode(Value::Float(1.5), &mut buf).unwrap();
+        assert_eq!(buf, [0xfb, 0x3f, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
     }
 
     #[test]
