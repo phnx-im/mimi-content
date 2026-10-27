@@ -327,7 +327,6 @@ version = "0.1.0"
 dependencies = [
  "ciborium",
  "criterion",
- "half",
  "hex",
  "minicbor",
  "minicbor-serde",

@@ -138,10 +138,7 @@ impl<C> minicbor::Encode<C> for Value {
         match self {
             Value::Bool(b) => e.bool(*b)?,
             Value::Int(i) => e.i64(*i)?,
-            Value::Float(f) => {
-                encode_float(e, *f)?;
-                return Ok(());
-            }
+            Value::Float(f) => e.f64(*f)?,
             Value::Text(s) => e.str(s)?,
             Value::Bytes(b) => e.bytes(b)?,
             Value::Null => e.null()?,
@@ -163,28 +160,6 @@ impl<C> minicbor::Encode<C> for Value {
         };
         Ok(())
     }
-}
-
-/// Encodes a float in the shortest width that preserves its value, as the deterministic encoding
-/// of RFC 8949 section 4.2.1 requires. NaN is encoded as the half-width quiet NaN, the only NaN
-/// draft-ietf-mimi-content-09 permits.
-fn encode_float<W: minicbor::encode::Write>(
-    e: &mut minicbor::Encoder<W>,
-    f: f64,
-) -> Result<(), minicbor::encode::Error<W::Error>> {
-    if f.is_nan() {
-        e.f16(f32::NAN)?;
-        return Ok(());
-    }
-    let single = f as f32;
-    if f64::from(single) != f {
-        e.f64(f)?;
-    } else if half::f16::from_f32(single).to_f32() == single {
-        e.f16(single)?;
-    } else {
-        e.f32(single)?;
-    }
-    Ok(())
 }
 
 impl<'b, C> minicbor::Decode<'b, C> for Value {
@@ -211,6 +186,8 @@ fn decode_value<'b>(
                 .map_err(|_| decode::Error::message("u64 out of range"))?,
         )),
         Type::I8 | Type::I16 | Type::I32 | Type::I64 => Ok(Value::Int(d.i64()?)),
+        // Floats are always encoded as f64, but the half and single widths are decoded so that
+        // deterministically encoded input round-trips.
         Type::F16 => Ok(Value::Float(d.f16()?.into())),
         Type::F32 => Ok(Value::Float(d.f32()?.into())),
         Type::F64 => Ok(Value::Float(d.f64()?)),
@@ -406,27 +383,22 @@ mod tests {
         assert_eq!(decode(&e.into_writer()), expected);
     }
 
-    /// Floats take the shortest width that preserves the value, and NaN is the half-width quiet
-    /// NaN.
+    /// Floats of every width decode. Encoding always uses f64, so the bytes a message hashes to
+    /// do not depend on which widths the encoder could shorten.
     #[test]
-    fn floats_use_shortest_width() {
-        let cases: [(f64, &[u8]); 5] = [
-            (1.0, &[0xf9, 0x3c, 0x00]),
-            (1.5, &[0xf9, 0x3e, 0x00]),
-            (f64::from(f32::MAX), &[0xfa, 0x7f, 0x7f, 0xff, 0xff]),
-            (0.1, &[0xfb, 0x3f, 0xb9, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9a]),
-            (f64::NAN, &[0xf9, 0x7e, 0x00]),
+    fn floats_decode_at_every_width_and_encode_as_f64() {
+        let cases: [(&[u8], f64); 3] = [
+            (&[0xf9, 0x3e, 0x00], 1.5),
+            (&[0xfa, 0x3f, 0xc0, 0x00, 0x00], 1.5),
+            (&[0xfb, 0x3f, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], 1.5),
         ];
-        for (value, expected) in cases {
-            let mut buf = Vec::new();
-            minicbor::encode(Value::Float(value), &mut buf).unwrap();
-            assert_eq!(buf, expected, "{value}");
-            match decode(&buf) {
-                Value::Float(decoded) if value.is_nan() => assert!(decoded.is_nan()),
-                Value::Float(decoded) => assert_eq!(decoded, value),
-                other => panic!("decoded {other:?}"),
-            }
+        for (input, value) in cases {
+            assert_eq!(decode(input), Value::Float(value));
         }
+
+        let mut buf = Vec::new();
+        minicbor::encode(Value::Float(1.5), &mut buf).unwrap();
+        assert_eq!(buf, [0xfb, 0x3f, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
     }
 
     #[test]

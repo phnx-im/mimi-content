@@ -13,7 +13,6 @@ license = "AGPL-3.0-or-later"
 serde = ["dep:serde", "serde_bytes"]
 
 [dependencies]
-half = "2.4.0"
 minicbor = { version = "2.2.1", features = ["std", "derive", "half"] }
 sha2 = { version = "0.11.0", default-features = false }
 serde = { version = "1.0.228", optional = true }
