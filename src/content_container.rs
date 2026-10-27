@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use minicbor::{bytes::ByteVec, data::Type};
+use minicbor::data::Type;
 #[cfg(feature = "serde")]
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
@@ -19,6 +19,10 @@ use crate::{
 pub enum Error {
     UnsupportedContentType,
     NotUtf8,
+    /// A sender or room identifier longer than `u16::MAX` octets cannot be length-prefixed in
+    /// the message ID hash input.
+    UriTooLong,
+    InvalidExtensionName(&'static str),
     Encode(minicbor::encode::Error<Infallible>),
     Decode(minicbor::decode::Error),
     #[cfg(feature = "serde")]
@@ -32,6 +36,8 @@ impl fmt::Display for Error {
         match self {
             Error::UnsupportedContentType => write!(f, "unsupported content type"),
             Error::NotUtf8 => write!(f, "not UTF-8"),
+            Error::UriTooLong => write!(f, "sender or room identifier exceeds 65535 octets"),
+            Error::InvalidExtensionName(reason) => write!(f, "invalid extension name: {reason}"),
             Error::Encode(e) => write!(f, "encoding failed: {e}"),
             Error::Decode(e) => write!(f, "decoding failed: {e}"),
             #[cfg(feature = "serde")]
@@ -48,40 +54,9 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(minicbor::Encode, minicbor::Decode, Default, PartialEq, Debug, Clone)]
 #[cbor(array)]
-pub struct MimiContentV1 {
-    #[cbor(n(0), with = "minicbor::bytes")]
-    pub replaces: Option<Vec<u8>>,
-    #[cbor(n(1), with = "minicbor::bytes")]
-    pub topic_id: Vec<u8>,
-    #[cbor(n(2))]
-    pub expires: Option<Expiration>,
-    #[cbor(n(3), with = "minicbor::bytes")]
-    pub in_reply_to: Option<Vec<u8>>,
-    #[cbor(n(4))]
-    pub last_seen: Vec<ByteVec>,
-    #[cbor(n(5))]
-    pub extensions: BTreeMap<ExtensionName, cbor::Value>,
-    #[cbor(n(6))]
-    pub nested_part: NestedPart,
-}
-
-impl MimiContentV1 {
-    pub fn upgrade(self) -> MimiContent {
-        MimiContent {
-            salt: [0; 16].to_vec(),
-            replaces: self.replaces,
-            topic_id: self.topic_id,
-            expires: self.expires,
-            in_reply_to: self.in_reply_to,
-            extensions: self.extensions,
-            nested_part: self.nested_part,
-        }
-    }
-}
-
-#[derive(minicbor::Encode, minicbor::Decode, Default, PartialEq, Debug, Clone)]
-#[cbor(array)]
 pub struct MimiContent {
+    /// Per-message random salt. The draft requires 16 cryptographically random octets. Decoding
+    /// accepts any length so that non-conforming messages still round-trip.
     #[cbor(n(0), with = "minicbor::bytes")]
     pub salt: Vec<u8>,
     #[cbor(n(1), with = "minicbor::bytes")]
@@ -99,15 +74,51 @@ pub struct MimiContent {
 }
 
 impl MimiContent {
+    /// Computes the message ID as defined in draft-ietf-mimi-content-09, section 3.3.
+    ///
+    /// ```text
+    /// hash_output = SHA256(senderUriLength || senderUri || roomUriLength || roomUri ||
+    ///                      message || salt)
+    /// messageId   = 0x01 || hash_output[0..31]
+    /// ```
+    ///
+    /// The lengths are big-endian 16-bit octet counts, so `sender` and `room` must not exceed
+    /// `u16::MAX` octets.
     pub fn message_id(&self, sender: &[u8], room: &[u8]) -> Result<Vec<u8>> {
+        let sender_len = u16::try_from(sender.len()).map_err(|_| Error::UriTooLong)?;
+        let room_len = u16::try_from(room.len()).map_err(|_| Error::UriTooLong)?;
+        self.hash_message_id(&[
+            &sender_len.to_be_bytes(),
+            sender,
+            &room_len.to_be_bytes(),
+            room,
+        ])
+    }
+
+    /// Computes the message ID as defined in draft-ietf-mimi-content-07, which has no length
+    /// prefixes in the hash input:
+    ///
+    /// ```text
+    /// messageId = 0x01 || SHA256(senderUri || roomUri || message || salt)[0..31]
+    /// ```
+    ///
+    /// Messages sent before draft -08 were identified this way, and references to them carry
+    /// these IDs, so an implementation with such messages in circulation keeps computing them.
+    /// New messages use [`MimiContent::message_id`].
+    pub fn message_id_draft07(&self, sender: &[u8], room: &[u8]) -> Result<Vec<u8>> {
+        self.hash_message_id(&[sender, room])
+    }
+
+    fn hash_message_id(&self, prefix: &[&[u8]]) -> Result<Vec<u8>> {
         let mut hasher = Sha256::new();
-        hasher.update(sender);
-        hasher.update(room);
+        for part in prefix {
+            hasher.update(part);
+        }
         hasher.update(self.serialize()?);
         hasher.update(self.salt.as_slice());
         let hash = hasher.finalize();
 
-        let mut result = vec![0x01];
+        let mut result = vec![HashAlgorithm::Sha256.into()];
         result.extend(&hash[0..31]);
         Ok(result)
     }
@@ -132,6 +143,7 @@ impl MimiContent {
         name: ExtensionName,
         value: T,
     ) -> Result<Self, Error> {
+        name.validate().map_err(Error::InvalidExtensionName)?;
         let value = cbor::Value::from_serde(&value).map_err(Error::Serde)?;
         // The extension map is at level 1, we have only max 3 levels of nesting.
         if !value.within_depth(3) {
@@ -245,10 +257,37 @@ impl MimiContent {
     }
 }
 
+/// The name of an extension in the `mimiExtensions` map.
+///
+/// Draft-ietf-mimi-content-09 restricts names to integers representable as a double without loss
+/// of precision and to text of 1 to 255 octets. [`MimiContent::with_extension`] enforces the
+/// restriction. Encoding and decoding do not, so that non-conforming messages still round-trip.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum ExtensionName {
     Text(String),
     Number(i64),
+}
+
+/// Largest integer magnitude an extension name may have: 2^53 - 1.
+const MAX_EXTENSION_NUMBER: i64 = (1 << 53) - 1;
+
+impl ExtensionName {
+    /// Checks the data model restrictions of draft-ietf-mimi-content-09, section 6.2.
+    pub fn validate(&self) -> std::result::Result<(), &'static str> {
+        match self {
+            ExtensionName::Text(text) if text.is_empty() => Err("text name is empty"),
+            ExtensionName::Text(text) if text.len() > 255 => {
+                Err("text name is longer than 255 octets")
+            }
+            ExtensionName::Text(_) => Ok(()),
+            ExtensionName::Number(number)
+                if *number > MAX_EXTENSION_NUMBER || *number < -MAX_EXTENSION_NUMBER =>
+            {
+                Err("integer name is not representable as a double")
+            }
+            ExtensionName::Number(_) => Ok(()),
+        }
+    }
 }
 
 // Ordering per RFC 8949 4.2.1
@@ -738,7 +777,7 @@ mod tests {
                     )
                     .unwrap()
             ),
-            "01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79"
+            "017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4"
         );
 
         let result = value.serialize().unwrap();
@@ -747,7 +786,7 @@ mod tests {
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
-        // TODO: Mimi draft is wrong here
+        // Taken from the MIMI content format draft examples
         let target = hex_decode(
             r#"
             87                                      # array(7)
@@ -800,7 +839,7 @@ mod tests {
             topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: Some(
-                hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
+                hex::decode("017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4")
                     .unwrap(),
             ),
             extensions: extensions_bob(),
@@ -823,14 +862,14 @@ mod tests {
                     )
                     .unwrap()
             ),
-            "01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836"
+            "015354973c2b65ca937bf1e035ae53a5ab80e947afa43d46920d4202e5cc0b27"
         );
 
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
-        // Taken from MIMI content format draft
+        // Taken from the MIMI content format draft examples
         let target = hex_decode(
             r#"
             87                                      # array(7)
@@ -840,7 +879,7 @@ mod tests {
                40                                   # bytes(0)
                f6                                   # primitive(22)
                58 20                                # bytes(32)
-                  01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79
+                  017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4
                a2                                   # map(2)
                   01                                # unsigned(1)
                   78 1e                             # text(30)
@@ -881,7 +920,7 @@ mod tests {
             topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: Some(
-                hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
+                hex::decode("017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4")
                     .unwrap(),
             ),
             extensions: extensions_cathy(),
@@ -904,14 +943,14 @@ mod tests {
                     )
                     .unwrap()
             ),
-            "01b1a14a88f4480e1336be86987854f838a3ec82944d4533d8d4088578550ed7"
+            "0158c4288911e50a8f6be3f47746b6682f10fd91bc8c05557aa589a3157aff68"
         );
 
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
-        // TODO: Draft repo has wrong message ids here
+        // Taken from the MIMI content format draft examples
         let target = hex_decode(
             r#"
             87                                      # array(7)
@@ -921,7 +960,7 @@ mod tests {
                40                                   # bytes(0)
                f6                                   # primitive(22)
                58 20                                # bytes(32)
-               01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79
+               017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4
                a2                                   # map(2)
                   01                                # unsigned(1)
                   78 25                             # text(37)
@@ -957,13 +996,13 @@ mod tests {
         let value = MimiContent {
             salt: hex::decode("b8c2e6d8800ecf45df39be6c45f4c042").unwrap(),
             replaces: Some(
-                hex::decode(b"01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836")
+                hex::decode(b"015354973c2b65ca937bf1e035ae53a5ab80e947afa43d46920d4202e5cc0b27")
                     .unwrap(),
             ),
             topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: Some(
-                hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
+                hex::decode("017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4")
                     .unwrap(),
             ),
             extensions: extensions_bob(),
@@ -986,26 +1025,26 @@ mod tests {
                     )
                     .unwrap()
             ),
-            "01fdcd2f418e4b16f6ba319800a44c12b3b0730871f29385bdc6d151b15751ad"
+            "014028c0deddbdea56bec26172f6ede953d11024cb82b8192b5e2aea62d7fb47"
         );
 
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
-        // TODO: Draft repo has wrong message ids here
+        // Taken from the MIMI content format draft examples
         let target = hex_decode(
             r#"
             87                                      # array(7)
                50                                   # bytes(16)
                   b8c2e6d8800ecf45df39be6c45f4c042  # "\xB8\xC2\xE6؀\u000E\xCFE\xDF9\xBElE\xF4\xC0B"
                58 20                                # bytes(32)
-                  01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836
+                  015354973c2b65ca937bf1e035ae53a5ab80e947afa43d46920d4202e5cc0b27
                40                                   # bytes(0)
                                                     # ""
                f6                                   # primitive(22)
                58 20                                # bytes(32)
-                  01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79
+                  017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4
                a2                                   # map(2)
                   01                                # unsigned(1)
                   78 1e                             # text(30)
@@ -1033,13 +1072,13 @@ mod tests {
         let value = MimiContent {
             salt: hex::decode("0a590d73b2c7761c39168be5ebf7f2e6").unwrap(),
             replaces: Some(
-                hex::decode(b"01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836")
+                hex::decode(b"015354973c2b65ca937bf1e035ae53a5ab80e947afa43d46920d4202e5cc0b27")
                     .unwrap(),
             ),
             topic_id: b"".to_vec(),
             expires: None,
             in_reply_to: Some(
-                hex::decode("01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79")
+                hex::decode("017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4")
                     .unwrap(),
             ),
             extensions: extensions_bob(),
@@ -1060,26 +1099,26 @@ mod tests {
                     )
                     .unwrap()
             ),
-            "01b85744b443e9db85de5bb826c04bcd65b625e53d17839dc8a3f21321421088"
+            "011d9efc78d04d4dcf4d82b07d5199bbef37011c1f0c7e004b6111c6dda504b4"
         );
 
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
-        // TODO: Draft repo has wrong message ids here
+        // Taken from the MIMI content format draft examples
         let target = hex_decode(
             r#"
             87                                      # array(7)
                 50                                   # bytes(16)
                 0a590d73b2c7761c39168be5ebf7f2e6  # "\nY\rs\xB2\xC7v\u001C9\u0016\x8B\xE5\xEB\xF7\xF2\xE6"
                 58 20                                # bytes(32)
-                01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836
+                015354973c2b65ca937bf1e035ae53a5ab80e947afa43d46920d4202e5cc0b27
                 40                                   # bytes(0)
                                                     # ""
                 f6                                   # primitive(22)
                 58 20                                # bytes(32)
-                01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79
+                017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4
                 a2                                   # map(2)
                 01                                # unsigned(1)
                 78 1e                             # text(30)
@@ -1127,14 +1166,14 @@ mod tests {
                     )
                     .unwrap()
             ),
-            "0106308e2c03346eba95b24abdfa9fe643aa247debfb7192feae647155316920"
+            "01e59db8173939facc2c8a4a0f0ae8d0c7a11a81239626630c9464a8d6717a03"
         );
 
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
-        // Taken from MIMI content format draft
+        // Taken from the MIMI content format draft examples
         let target = hex_decode(
             r#"
             87                                      # array(7)
@@ -1223,14 +1262,14 @@ mod tests {
                     )
                     .unwrap()
             ),
-            "01ad825f6116adeb437a7b1f95a9d9acbcc708f83f5df505d32af9c2826e8b5f"
+            "0176180c7d19a925021fe446d241134d05c38e0d999cdc0f39c391d2377ed9d1"
         );
 
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
-        // Taken from MIMI content format draft
+        // Taken from the MIMI content format draft examples
         let target = hex_decode(
             r#"
             87                                      # array(7)
@@ -1327,14 +1366,14 @@ mod tests {
                     )
                     .unwrap()
             ),
-            "01d8dab2e22b75dee4f5e52bb181d2d732008a235b80375113803e36b32a5f06"
+            "01496d15a8dba28d7397f9868b70768e4a67f765d5b5b1ae9e03848c5fdeb0ba"
         );
 
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
-        // Taken from MIMI content format draft
+        // Taken from the MIMI content format draft examples
         let target = hex_decode(
             r#"
             87                                      # array(7)
@@ -1432,14 +1471,14 @@ mod tests {
                     )
                     .unwrap()
             ),
-            "015c0469c52da0938c27cfa16702e27735a4729746be5f64bc5838f754828464"
+            "01da5a515ec5db42cc4dcc19b90c3c31245d8a1cfcce11318f24eb11dce0990e"
         );
 
         // Test deserialization
         let value2 = MimiContent::deserialize(&result).unwrap();
         assert_eq!(value, value2);
 
-        // Taken from MIMI content format draft
+        // Taken from the MIMI content format draft examples
         let target = hex_decode(
             r##"
             87                                      # array(7)
@@ -1486,6 +1525,210 @@ mod tests {
         );
 
         assert_eq!(hex::encode(result), hex::encode(target));
+    }
+
+    #[test]
+    fn mention() {
+        let value = MimiContent {
+            salt: hex::decode("04f290e215d0f82d1750bfa8b7dc089d").unwrap(),
+            replaces: None,
+            topic_id: b"".to_vec(),
+            expires: None,
+            in_reply_to: Some(
+                hex::decode("017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4")
+                    .unwrap(),
+            ),
+            extensions: extensions_cathy(),
+            nested_part: NestedPart::SinglePart {
+                disposition: Disposition::Render,
+                language: "".to_owned(),
+                content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
+                content: b"Kudos to [@Alice Smith](mimi://example.com/u/alice-smith) \
+                           for making the release happen!"
+                    .to_vec(),
+            },
+        };
+
+        let result = value.serialize().unwrap();
+
+        assert_eq!(
+            hex::encode(
+                value
+                    .message_id(
+                        b"mimi://example.com/u/cathy-washington",
+                        b"mimi://example.com/r/engineering_team"
+                    )
+                    .unwrap()
+            ),
+            "018d825adf9f6be00dcafc5704c4102f5022e74219d0b603e4ba7622654042af"
+        );
+
+        let value2 = MimiContent::deserialize(&result).unwrap();
+        assert_eq!(value, value2);
+
+        // Taken from the MIMI content format draft examples
+        let target = hex_decode(
+            r#"
+            87 50 04f290e215d0f82d1750bfa8b7dc089d f6 40 f6
+            58 20 017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4
+            a2
+               01 78 25 6d696d693a2f2f6578616d706c652e636f6d2f752f63617468792d77617368696e67746f6e
+               02 78 25 6d696d693a2f2f6578616d706c652e636f6d2f722f656e67696e656572696e675f7465616d
+            85 01 60 01
+               78 1e 746578742f6d61726b646f776e3b76617269616e743d47464d2d4d494d49
+               58 58 4b75646f7320746f205b40416c69636520536d6974685d286d696d693a2f2f6578616d706c65
+                     2e636f6d2f752f616c6963652d736d6974682920666f72206d616b696e67207468652072656c
+                     656173652068617070656e21
+            "#,
+        );
+
+        assert_eq!(hex::encode(result), hex::encode(target));
+    }
+
+    #[test]
+    fn unlike() {
+        let value = MimiContent {
+            salt: hex::decode("c5ba86dc9fd272e58ca52ec805b79199").unwrap(),
+            replaces: Some(
+                hex::decode("0158c4288911e50a8f6be3f47746b6682f10fd91bc8c05557aa589a3157aff68")
+                    .unwrap(),
+            ),
+            topic_id: b"".to_vec(),
+            expires: None,
+            in_reply_to: Some(
+                hex::decode("017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4")
+                    .unwrap(),
+            ),
+            extensions: extensions_cathy(),
+            nested_part: NestedPart::NullPart {
+                disposition: Disposition::Reaction,
+                language: "".to_owned(),
+            },
+        };
+
+        let result = value.serialize().unwrap();
+
+        assert_eq!(
+            hex::encode(
+                value
+                    .message_id(
+                        b"mimi://example.com/u/cathy-washington",
+                        b"mimi://example.com/r/engineering_team"
+                    )
+                    .unwrap()
+            ),
+            "013aadbb8f313253c8930f4e93c6ca54b2ed06d258185bdcec3870534c8a4ec4"
+        );
+
+        let value2 = MimiContent::deserialize(&result).unwrap();
+        assert_eq!(value, value2);
+
+        // Taken from the MIMI content format draft examples
+        let target = hex_decode(
+            r#"
+            87 50 c5ba86dc9fd272e58ca52ec805b79199
+            58 20 0158c4288911e50a8f6be3f47746b6682f10fd91bc8c05557aa589a3157aff68
+            40 f6
+            58 20 017ce54837404c3696e0c747b985cb172716d0ed0a3d249ca63ace7d82a096f4
+            a2
+               01 78 25 6d696d693a2f2f6578616d706c652e636f6d2f752f63617468792d77617368696e67746f6e
+               02 78 25 6d696d693a2f2f6578616d706c652e636f6d2f722f656e67696e656572696e675f7465616d
+            83 02 60 00
+            "#,
+        );
+
+        assert_eq!(hex::encode(result), hex::encode(target));
+    }
+
+    /// The message ID hash input prefixes the sender and room with their lengths in octets, not
+    /// characters.
+    #[test]
+    fn message_id_prefixes_octet_lengths() {
+        let value = MimiContent::simple_markdown_message("hi".to_owned(), [7; 16]);
+        let sender = "mimi://example.com/u/zoë";
+        let room = "mimi://example.com/r/café";
+        assert_eq!(sender.len(), 25);
+        assert_eq!(room.len(), 26);
+
+        let mut hasher = Sha256::new();
+        hasher.update([0, 25]);
+        hasher.update(sender.as_bytes());
+        hasher.update([0, 26]);
+        hasher.update(room.as_bytes());
+        hasher.update(value.serialize().unwrap());
+        hasher.update([7; 16]);
+        let expected = [&[0x01][..], &hasher.finalize()[..31]].concat();
+
+        let id = value
+            .message_id(sender.as_bytes(), room.as_bytes())
+            .unwrap();
+        assert_eq!(id, expected);
+        assert_eq!(id.len(), 32);
+    }
+
+    /// The draft-07 derivation reproduces the -07 example IDs. The original message is the same
+    /// in both drafts. The reply embeds the original's ID, so its -07 form carries the -07 ID.
+    #[test]
+    fn draft07_message_ids() {
+        let sender = b"mimi://example.com/u/alice-smith";
+        let room = b"mimi://example.com/r/engineering_team";
+        let original = MimiContent {
+            salt: hex::decode("5eed9406c2545547ab6f09f20a18b003").unwrap(),
+            replaces: None,
+            topic_id: b"".to_vec(),
+            expires: None,
+            in_reply_to: None,
+            extensions: extensions_alice(),
+            nested_part: NestedPart::SinglePart {
+                disposition: Disposition::Render,
+                language: "".to_owned(),
+                content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
+                content: b"Hi everyone, we just shipped release 2.0. __Good  work__!".to_vec(),
+            },
+        };
+        let original_id = original.message_id_draft07(sender, room).unwrap();
+        assert_eq!(
+            hex::encode(&original_id),
+            "01b0084467273cc43d6f0ebeac13eb84229c4fffe8f6c3594c905f47779e5a79"
+        );
+        assert_ne!(original_id, original.message_id(sender, room).unwrap());
+
+        let reply = MimiContent {
+            salt: hex::decode("11a458c73b8dd2cf404db4b378b8fe4d").unwrap(),
+            replaces: None,
+            topic_id: b"".to_vec(),
+            expires: None,
+            in_reply_to: Some(original_id),
+            extensions: extensions_bob(),
+            nested_part: NestedPart::SinglePart {
+                disposition: Disposition::Render,
+                language: "".to_owned(),
+                content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
+                content: b"Right on! _Congratulations_ 'all!".to_vec(),
+            },
+        };
+        assert_eq!(
+            hex::encode(
+                reply
+                    .message_id_draft07(
+                        b"mimi://example.com/u/bob-jones",
+                        b"mimi://example.com/r/engineering_team"
+                    )
+                    .unwrap()
+            ),
+            "01a419aef4e16d43cfc06c28235ecfbe9faebc740d0148e7ca20b22150930836"
+        );
+    }
+
+    #[test]
+    fn message_id_rejects_inputs_longer_than_u16() {
+        let value = MimiContent::default();
+        let room = b"room";
+        assert!(value.message_id(&[0; 65535], room).is_ok());
+        let err = value.message_id(&[0; 65536], room).unwrap_err();
+        assert!(matches!(err, Error::UriTooLong), "{err}");
+        let err = value.message_id(room, &[0; 65536]).unwrap_err();
+        assert!(matches!(err, Error::UriTooLong), "{err}");
     }
 
     #[cfg(feature = "serde")]
@@ -1560,6 +1803,30 @@ mod tests {
             minicbor::encode(&name, &mut buf).unwrap();
             let decoded: ExtensionName = minicbor::decode(&buf).unwrap();
             assert_eq!(name, decoded);
+        }
+    }
+
+    #[test]
+    fn extension_name_validation() {
+        let valid = [
+            ExtensionName::Number(0),
+            ExtensionName::Number(MAX_EXTENSION_NUMBER),
+            ExtensionName::Number(-MAX_EXTENSION_NUMBER),
+            ExtensionName::Text("a".to_owned()),
+            ExtensionName::Text("a".repeat(255)),
+        ];
+        for name in valid {
+            assert!(name.validate().is_ok(), "{name:?}");
+        }
+
+        let invalid = [
+            ExtensionName::Number(MAX_EXTENSION_NUMBER + 1),
+            ExtensionName::Number(-MAX_EXTENSION_NUMBER - 1),
+            ExtensionName::Text(String::new()),
+            ExtensionName::Text("a".repeat(256)),
+        ];
+        for name in invalid {
+            assert!(name.validate().is_err(), "{name:?}");
         }
     }
 
@@ -1671,6 +1938,15 @@ mod tests {
         by_encoding.sort_by_key(|name| encode_value(name));
 
         assert_eq!(by_ord, by_encoding);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn with_extension_rejects_invalid_names() {
+        let err = MimiContent::default()
+            .with_extension(ExtensionName::Text(String::new()), 1)
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidExtensionName(_)), "{err}");
     }
 
     #[cfg(feature = "serde")]

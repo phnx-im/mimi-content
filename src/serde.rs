@@ -27,6 +27,8 @@ impl Serialize for Value {
         match self {
             Value::Bool(v) => v.serialize(serializer),
             Value::Int(v) => v.serialize(serializer),
+            // Serde has no half-precision float, so this is the shortest width it can express.
+            Value::Float(v) if f64::from(*v as f32) == *v => serializer.serialize_f32(*v as f32),
             Value::Float(v) => v.serialize(serializer),
             Value::Text(v) => v.serialize(serializer),
             Value::Bytes(v) => serializer.serialize_bytes(v),
@@ -1053,7 +1055,7 @@ mod tests {
             (text("null"), Value::Null),
             (
                 text("nested"),
-                Value::Array(vec![Value::Int(-7), Value::Float(1.5), Value::Bool(true)]),
+                Value::Array(vec![Value::Int(-7), Value::Float(0.1), Value::Bool(true)]),
             ),
         ]))
     }
@@ -1244,6 +1246,26 @@ mod tests {
         let mut expected = Vec::new();
         minicbor::encode(&value, &mut expected).unwrap();
         assert_eq!(bytes, expected);
+    }
+
+    /// Serde cannot express half-precision floats, so a float that fits in 16 bits is the one
+    /// value whose serde encoding is wider than the deterministic minicbor encoding. Both decode
+    /// to the same value.
+    #[test]
+    fn serde_encodes_small_floats_as_f32() {
+        let value = Value::Float(1.5);
+
+        let bytes = minicbor_serde::to_vec(&value).unwrap();
+        assert_eq!(bytes, [0xfa, 0x3f, 0xc0, 0x00, 0x00]);
+        assert_eq!(minicbor::decode::<Value>(&bytes).unwrap(), value);
+
+        let mut expected = Vec::new();
+        minicbor::encode(&value, &mut expected).unwrap();
+        assert_eq!(expected, [0xf9, 0x3e, 0x00]);
+        assert_eq!(
+            minicbor_serde::from_slice::<Value>(&expected).unwrap(),
+            value
+        );
     }
 
     #[test]
