@@ -25,10 +25,7 @@ fn minicbor_mimi_content() -> mimi_content::MimiContent {
     };
 
     MimiContent {
-        salt: hex::decode("261c953e178af653fe3d42641b91d814")
-            .unwrap()
-            .try_into()
-            .unwrap(),
+        salt: hex::decode("261c953e178af653fe3d42641b91d814").unwrap(),
         replaces: None,
         topic_id: b"".to_vec(),
         expires: None,
@@ -69,10 +66,7 @@ fn large_mimi_content() -> mimi_content::MimiContent {
         .collect();
 
     MimiContent {
-        salt: hex::decode("261c953e178af653fe3d42641b91d814")
-            .unwrap()
-            .try_into()
-            .unwrap(),
+        salt: hex::decode("261c953e178af653fe3d42641b91d814").unwrap(),
         replaces: None,
         topic_id: b"".to_vec(),
         expires: None,

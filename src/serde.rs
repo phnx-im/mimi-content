@@ -616,7 +616,7 @@ impl<'de> Deserialize<'de> for MimiContent {
             }
 
             fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<MimiContent, A::Error> {
-                let salt: serde_bytes::ByteArray<16> = seq
+                let salt: serde_bytes::ByteBuf = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(0, &self))?;
                 let replaces: Option<serde_bytes::ByteArray<32>> = seq
@@ -638,7 +638,7 @@ impl<'de> Deserialize<'de> for MimiContent {
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(6, &self))?;
                 Ok(MimiContent {
-                    salt: *salt,
+                    salt: salt.into_vec(),
                     replaces: replaces.map(|b| MimiId::from(*b)),
                     topic_id: topic_id.into_vec(),
                     expires,
