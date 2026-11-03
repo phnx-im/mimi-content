@@ -8,7 +8,7 @@ SPDX-License-Identifier: CC-BY-4.0
 
 This repository contains the code for a Rust implementation of the [MIMI message content draft](https://datatracker.ietf.org/doc/draft-ietf-mimi-content/).
 
-The crate implements the message container and the message ID derivation of [draft-ietf-mimi-content-09](https://www.ietf.org/archive/id/draft-ietf-mimi-content-09.html), and the message status report format of [draft-mahy-mimi-message-status-01](https://www.ietf.org/archive/id/draft-mahy-mimi-message-status-01.html).
+The crate implements the message container and the message ID derivation of [draft-ietf-mimi-content-10](https://www.ietf.org/archive/id/draft-ietf-mimi-content-10.html), and the message status report format of [draft-mahy-mimi-message-status-02](https://www.ietf.org/archive/id/draft-mahy-mimi-message-status-02.html).
 
 Decoding is lenient. Salts of any length, indefinite-length items, single-part multiparts, floats of any width and extension names outside the draft's data model are accepted, so that messages from older or non-conforming implementations still decode. Re-serializing decoded content reproduces its bytes, except for input that was not in shortest-form or definite-length encoding.
 

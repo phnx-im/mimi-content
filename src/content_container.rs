@@ -74,7 +74,7 @@ pub struct MimiContent {
 }
 
 impl MimiContent {
-    /// Computes the message ID as defined in draft-ietf-mimi-content-09, section 3.3.
+    /// Computes the message ID as defined in draft-ietf-mimi-content-10, section 3.3.
     ///
     /// ```text
     /// hash_output = SHA256(senderUriLength || senderUri || roomUriLength || roomUri ||
@@ -136,7 +136,7 @@ impl MimiContent {
     /// If the value has nesting depth greater than 4, an error is returned.
     ///
     /// See
-    /// <https://www.ietf.org/archive/id/draft-ietf-mimi-content-09.html#name-depth-restrictions>
+    /// <https://www.ietf.org/archive/id/draft-ietf-mimi-content-10.html#name-depth-restrictions>
     #[cfg(feature = "serde")]
     pub fn with_extension<T: Serialize>(
         mut self,
@@ -259,7 +259,7 @@ impl MimiContent {
 
 /// The name of an extension in the `mimiExtensions` map.
 ///
-/// Draft-ietf-mimi-content-09 restricts names to integers representable as a double without loss
+/// Draft-ietf-mimi-content-10 restricts names to integers representable as a double without loss
 /// of precision and to text of 1 to 255 octets. [`MimiContent::with_extension`] enforces the
 /// restriction. Encoding and decoding do not, so that non-conforming messages still round-trip.
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -272,7 +272,7 @@ pub enum ExtensionName {
 const MAX_EXTENSION_NUMBER: i64 = (1 << 53) - 1;
 
 impl ExtensionName {
-    /// Checks the data model restrictions of draft-ietf-mimi-content-09, section 6.2.
+    /// Checks the data model restrictions of draft-ietf-mimi-content-10, section 6.2.
     pub fn validate(&self) -> std::result::Result<(), &'static str> {
         match self {
             ExtensionName::Text(text) if text.is_empty() => Err("text name is empty"),
