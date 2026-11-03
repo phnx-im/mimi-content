@@ -56,12 +56,15 @@ fn minicbor_mimi_content() -> mimi_content::MimiContent {
 fn large_mimi_content() -> mimi_content::MimiContent {
     use mimi_content::content_container::{Disposition, MimiContent, NestedPart, PartSemantics};
 
-    let parts = (0..13_000)
+    // A body holds at most 1024 NestedParts, counting the MultiPart that contains them.
+    let parts = (0..1023)
         .map(|i| NestedPart::SinglePart {
             disposition: Disposition::Render,
             language: "".to_owned(),
             content_type: "text/markdown;variant=GFM-MIMI".to_owned(),
-            content: format!("Message number {i}: hello world!").into_bytes(),
+            content: format!("Message number {i}: hello world! ")
+                .repeat(26)
+                .into_bytes(),
         })
         .collect();
 
