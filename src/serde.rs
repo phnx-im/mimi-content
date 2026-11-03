@@ -15,7 +15,7 @@ use ::serde::{
 };
 
 use crate::{
-    cbor::{Value, MAX_NESTING},
+    cbor::{Value, MAX_NESTING, MAX_PREALLOCATED_VALUES},
     content_container::{
         Disposition, EncryptionAlgorithm, Expiration, ExtensionName, HashAlgorithm, MimiContent,
         NestedPart, PartCounter, PartSemantics,
@@ -625,10 +625,7 @@ impl<'de> DeserializeSeed<'de> for ValueSeed {
                 .deserialize(deserializer)
             }
             fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
-                let cap = seq
-                    .size_hint()
-                    .unwrap_or(0)
-                    .min(4096 / std::mem::size_of::<Value>());
+                let cap = seq.size_hint().unwrap_or(0).min(MAX_PREALLOCATED_VALUES);
                 let mut arr = Vec::with_capacity(cap);
                 while let Some(v) = seq.next_element_seed(ValueSeed {
                     depth: self.depth + 1,

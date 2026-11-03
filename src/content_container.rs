@@ -1817,13 +1817,13 @@ mod tests {
     }
 
     fn assert_decodes(bytes: &[u8]) {
-        MimiContent::deserialize(bytes).unwrap();
+        minicbor::decode::<MimiContent>(bytes).unwrap();
         #[cfg(feature = "serde")]
         minicbor_serde::from_slice::<MimiContent>(bytes).unwrap();
     }
 
     fn assert_rejects(bytes: &[u8]) {
-        MimiContent::deserialize(bytes).unwrap_err();
+        minicbor::decode::<MimiContent>(bytes).unwrap_err();
         #[cfg(feature = "serde")]
         minicbor_serde::from_slice::<MimiContent>(bytes).unwrap_err();
     }
@@ -1847,33 +1847,97 @@ mod tests {
         assert_rejects(&encode_body(multipart_body(vec![inner])));
     }
 
+    /// A container with an empty salt and the given extensions and body.
+    fn raw_container(extensions: &[u8], body: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0x87, 0x40, 0xf6, 0x40, 0xf6, 0xf6];
+        bytes.extend(extensions);
+        bytes.extend(body);
+        bytes
+    }
+
+    // NullPart [Unspecified, "", 0]
+    const RAW_NULL_PART: [u8; 4] = [0x83, 0x00, 0x60, 0x00];
+
+    /// An encoded MultiPart [Render, "", 3, ProcessAll, parts] with the given parts array header.
+    fn raw_multipart(parts_header: &[u8], parts: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0x85, 0x01, 0x60, 0x03, 0x02];
+        bytes.extend(parts_header);
+        bytes.extend(parts);
+        bytes
+    }
+
+    /// An encoded MultiPart whose parts are `parts`, in an indefinite-length array.
+    fn raw_indefinite_multipart(parts: &[Vec<u8>]) -> Vec<u8> {
+        let mut bytes = raw_multipart(&[0x9f], &parts.concat());
+        bytes.push(0xff);
+        bytes
+    }
+
     #[test]
     fn deeply_nested_parts_are_rejected_without_exhausting_the_stack() {
-        let mut bytes = vec![0x87, 0x40, 0xf6, 0x40, 0xf6, 0xf6, 0xa0];
+        let mut body = Vec::new();
         for _ in 0..100_000 {
-            // MultiPart [Render, "", 3, ProcessAll, [part]]
-            bytes.extend([0x85, 0x01, 0x60, 0x03, 0x02, 0x81]);
+            body.extend(raw_multipart(&[0x81], &[]));
         }
-        // NullPart [Unspecified, "", 0]
-        bytes.extend([0x83, 0x00, 0x60, 0x00]);
+        body.extend(RAW_NULL_PART);
 
-        assert_rejects(&bytes);
+        assert_rejects(&raw_container(&[0xa0], &body));
+    }
+
+    #[test]
+    fn nested_part_count_spans_sibling_multiparts() {
+        let siblings = |first, second| {
+            multipart_body(vec![
+                multipart_body(vec![NestedPart::default(); first]),
+                multipart_body(vec![NestedPart::default(); second]),
+            ])
+        };
+
+        assert_decodes(&encode_body(siblings(512, 509)));
+        assert_rejects(&encode_body(siblings(512, 510)));
     }
 
     #[test]
     fn indefinite_length_parts_decode() {
-        let bytes = [
-            0x87, 0x40, 0xf6, 0x40, 0xf6, 0xf6, 0xa0, // container fields
-            0x85, 0x01, 0x60, 0x03, 0x02, 0x9f, // MultiPart with indefinite-length parts
-            0x83, 0x00, 0x60, 0x00, // NullPart
-            0x83, 0x00, 0x60, 0x00, // NullPart
-            0xff,
-        ];
+        let body = raw_indefinite_multipart(&[RAW_NULL_PART.to_vec(), RAW_NULL_PART.to_vec()]);
 
-        let content = MimiContent::deserialize(&bytes).unwrap();
+        let content: MimiContent = minicbor::decode(&raw_container(&[0xa0], &body)).unwrap();
         assert_eq!(
             content.nested_part,
             multipart_body(vec![NestedPart::default(); 2])
         );
+    }
+
+    #[test]
+    fn indefinite_length_parts_obey_the_limits() {
+        let nested = |levels| {
+            let mut part = RAW_NULL_PART.to_vec();
+            for _ in 1..levels {
+                part = raw_indefinite_multipart(&[part]);
+            }
+            raw_container(&[0xa0], &part)
+        };
+        assert_decodes(&nested(4));
+        assert_rejects(&nested(5));
+
+        let wide = |children| {
+            raw_container(
+                &[0xa0],
+                &raw_indefinite_multipart(&vec![RAW_NULL_PART.to_vec(); children]),
+            )
+        };
+        assert_decodes(&wide(1023));
+        assert_rejects(&wide(1024));
+    }
+
+    #[test]
+    fn huge_declared_parts_length_is_rejected() {
+        let u64_max = [0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+
+        assert_rejects(&raw_container(&[0xa0], &raw_multipart(&u64_max, &[])));
+        assert_rejects(&raw_container(
+            &[0xa0],
+            &raw_multipart(&u64_max, &RAW_NULL_PART),
+        ));
     }
 }
