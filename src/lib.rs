@@ -9,4 +9,4 @@ mod serde;
 pub(crate) mod util;
 
 pub use content_container::{Disposition, Error, MimiContent, MimiId, NestedPart, Result};
-pub use message_status::{MessageStatus, MessageStatusReport, PerMessageStatus, Timestamp};
+pub use message_status::{MessageStatus, MessageStatusReport, PerMessageStatus};
