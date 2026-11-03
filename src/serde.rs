@@ -18,7 +18,7 @@ use crate::{
     cbor::{Value, MAX_NESTING, MAX_PREALLOCATED_VALUES},
     content_container::{
         Disposition, EncryptionAlgorithm, Expiration, ExtensionName, HashAlgorithm, MimiContent,
-        NestedPart, PartCounter, PartSemantics,
+        MimiId, NestedPart, PartCounter, PartSemantics,
     },
 };
 
@@ -739,10 +739,20 @@ impl Serialize for MimiContent {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut seq = serializer.serialize_seq(Some(7))?;
         seq.serialize_element(serde_bytes::Bytes::new(&self.salt))?;
-        seq.serialize_element(&self.replaces.as_deref().map(serde_bytes::Bytes::new))?;
+        seq.serialize_element(
+            &self
+                .replaces
+                .as_ref()
+                .map(|id| serde_bytes::Bytes::new(id.as_slice())),
+        )?;
         seq.serialize_element(serde_bytes::Bytes::new(&self.topic_id))?;
         seq.serialize_element(&self.expires)?;
-        seq.serialize_element(&self.in_reply_to.as_deref().map(serde_bytes::Bytes::new))?;
+        seq.serialize_element(
+            &self
+                .in_reply_to
+                .as_ref()
+                .map(|id| serde_bytes::Bytes::new(id.as_slice())),
+        )?;
         seq.serialize_element(&self.extensions)?;
         seq.serialize_element(&self.nested_part)?;
         seq.end()
@@ -764,7 +774,7 @@ impl<'de> Deserialize<'de> for MimiContent {
                 let salt: serde_bytes::ByteBuf = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(0, &self))?;
-                let replaces: Option<serde_bytes::ByteBuf> = seq
+                let replaces: Option<serde_bytes::ByteArray<32>> = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(1, &self))?;
                 let topic_id: serde_bytes::ByteBuf = seq
@@ -773,7 +783,7 @@ impl<'de> Deserialize<'de> for MimiContent {
                 let expires: Option<Expiration> = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(3, &self))?;
-                let in_reply_to: Option<serde_bytes::ByteBuf> = seq
+                let in_reply_to: Option<serde_bytes::ByteArray<32>> = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(4, &self))?;
                 let Extensions(extensions) = seq
@@ -784,10 +794,10 @@ impl<'de> Deserialize<'de> for MimiContent {
                     .ok_or_else(|| de::Error::invalid_length(6, &self))?;
                 Ok(MimiContent {
                     salt: salt.into_vec(),
-                    replaces: replaces.map(|b| b.into_vec()),
+                    replaces: replaces.map(|b| MimiId::from(*b)),
                     topic_id: topic_id.into_vec(),
                     expires,
-                    in_reply_to: in_reply_to.map(|b| b.into_vec()),
+                    in_reply_to: in_reply_to.map(|b| MimiId::from(*b)),
                     extensions,
                     nested_part,
                 })
