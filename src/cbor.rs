@@ -171,6 +171,12 @@ impl<'b, C> minicbor::Decode<'b, C> for Value {
 /// Maximum nesting depth of a [`Value`] when decoded/deserialized.
 pub(crate) const MAX_NESTING: usize = 32;
 
+/// Maximum number of array elements reserved before any of them is decoded.
+///
+/// A declared array length is attacker-controlled, and every enclosing level reserves its own
+/// capacity before the innermost one fails, so the reservation must not scale with the input.
+pub(crate) const MAX_PREALLOCATED_VALUES: usize = 4096 / std::mem::size_of::<Value>();
+
 fn decode_value<'b>(
     d: &mut minicbor::Decoder<'b>,
     depth: usize,
@@ -199,8 +205,7 @@ fn decode_value<'b>(
         }
         Type::Array | Type::ArrayIndef => {
             let len = to_len(d.array()?, "array")?;
-            let remaining = d.input().len().saturating_sub(d.position());
-            let mut arr = Vec::with_capacity(len.unwrap_or(0).min(remaining));
+            let mut arr = Vec::with_capacity(len.unwrap_or(0).min(MAX_PREALLOCATED_VALUES));
             while !at_end(d, len, arr.len())? {
                 arr.push(decode_value(d, depth + 1)?);
             }

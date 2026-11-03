@@ -645,59 +645,126 @@ impl<C> minicbor::Encode<C> for NestedPart {
     }
 }
 
+/// Maximum nesting level of a `NestedPart`, where the body is at level 1.
+///
+/// <https://www.ietf.org/archive/id/draft-ietf-mimi-content-10.html#name-depth-restrictions>
+const MAX_PART_DEPTH: usize = 4;
+
+/// Maximum number of `NestedPart`s in one body, counting every `MultiPart`.
+///
+/// <https://www.ietf.org/archive/id/draft-ietf-mimi-content-10.html#name-general-handling>
+const MAX_PARTS: usize = 1024;
+
+/// Enforces the depth and part count limits while a body is decoded.
+#[derive(Default)]
+pub(crate) struct PartCounter {
+    parts: usize,
+}
+
+impl PartCounter {
+    /// Registers a part at `level`, where the body is at level 1.
+    ///
+    /// Fails if the part is nested deeper than [`MAX_PART_DEPTH`] or is one more than
+    /// [`MAX_PARTS`].
+    pub(crate) fn enter(&mut self, level: usize) -> Result<(), &'static str> {
+        if level > MAX_PART_DEPTH {
+            return Err("NestedPart nested more than 4 levels deep");
+        }
+        self.parts += 1;
+        if self.parts > MAX_PARTS {
+            return Err("more than 1024 NestedParts in one body");
+        }
+        Ok(())
+    }
+}
+
 impl<C> minicbor::Decode<'_, C> for NestedPart {
     fn decode(
         d: &mut minicbor::Decoder<'_>,
         _ctx: &mut C,
     ) -> Result<Self, minicbor::decode::Error> {
-        let array = d.array()?.ok_or(minicbor::decode::Error::message(
-            "invalid array length for NestedPart",
-        ))?;
-        let disposition = d.decode()?;
-        let language = d.str()?.to_owned();
-        let discriminant = d.u8()?;
-        match (array, discriminant) {
-            (3, 0) => Ok(NestedPart::NullPart {
+        decode_nested_part(d, 1, &mut PartCounter::default())
+    }
+}
+
+fn decode_nested_part(
+    d: &mut minicbor::Decoder<'_>,
+    level: usize,
+    counter: &mut PartCounter,
+) -> Result<NestedPart, minicbor::decode::Error> {
+    counter
+        .enter(level)
+        .map_err(minicbor::decode::Error::message)?;
+    let array = d.array()?.ok_or(minicbor::decode::Error::message(
+        "invalid array length for NestedPart",
+    ))?;
+    let disposition = d.decode()?;
+    let language = d.str()?.to_owned();
+    let discriminant = d.u8()?;
+    match (array, discriminant) {
+        (3, 0) => Ok(NestedPart::NullPart {
+            disposition,
+            language,
+        }),
+        (5, 1) => Ok(NestedPart::SinglePart {
+            disposition,
+            language,
+            content_type: d.str()?.to_owned(),
+            content: d.bytes()?.to_vec(),
+        }),
+        (15, 2) => Ok(NestedPart::ExternalPart {
+            disposition,
+            language,
+            content_type: d.str()?.to_owned(),
+            url: d.str()?.to_owned(),
+            expires: d.u32()?,
+            size: d.u64()?,
+            enc_alg: d.decode()?,
+            key: d.bytes()?.to_vec(),
+            nonce: d.bytes()?.to_vec(),
+            aad: d.bytes()?.to_vec(),
+            hash_alg: d.decode()?,
+            content_hash: d.bytes()?.to_vec(),
+            description: d.str()?.to_owned(),
+            filename: d.str()?.to_owned(),
+        }),
+        (5, 3) => {
+            let part_semantics = d.decode()?;
+            let parts = decode_parts(d, level + 1, counter)?;
+            Ok(NestedPart::MultiPart {
                 disposition,
                 language,
-            }),
-            (5, 1) => Ok(NestedPart::SinglePart {
-                disposition,
-                language,
-                content_type: d.str()?.to_owned(),
-                content: d.bytes()?.to_vec(),
-            }),
-            (15, 2) => Ok(NestedPart::ExternalPart {
-                disposition,
-                language,
-                content_type: d.str()?.to_owned(),
-                url: d.str()?.to_owned(),
-                expires: d.u32()?,
-                size: d.u64()?,
-                enc_alg: d.decode()?,
-                key: d.bytes()?.to_vec(),
-                nonce: d.bytes()?.to_vec(),
-                aad: d.bytes()?.to_vec(),
-                hash_alg: d.decode()?,
-                content_hash: d.bytes()?.to_vec(),
-                description: d.str()?.to_owned(),
-                filename: d.str()?.to_owned(),
-            }),
-            (5, 3) => {
-                let part_semantics = d.decode()?;
-                let parts = d.decode()?;
-                Ok(NestedPart::MultiPart {
-                    disposition,
-                    language,
-                    part_semantics,
-                    parts,
-                })
+                part_semantics,
+                parts,
+            })
+        }
+        _ => Err(minicbor::decode::Error::message(
+            "invalid discriminant for NestedPart",
+        )),
+    }
+}
+
+/// Decodes the parts array of a `MultiPart` whose parts are at `level`.
+fn decode_parts(
+    d: &mut minicbor::Decoder<'_>,
+    level: usize,
+    counter: &mut PartCounter,
+) -> Result<Vec<NestedPart>, minicbor::decode::Error> {
+    let mut parts = Vec::new();
+    match d.array()? {
+        Some(len) => {
+            for _ in 0..len {
+                parts.push(decode_nested_part(d, level, counter)?);
             }
-            _ => Err(minicbor::decode::Error::message(
-                "invalid discriminant for NestedPart",
-            )),
+        }
+        None => {
+            while d.datatype()? != Type::Break {
+                parts.push(decode_nested_part(d, level, counter)?);
+            }
+            d.skip()?;
         }
     }
+    Ok(parts)
 }
 
 open_enum! {
@@ -2114,6 +2181,68 @@ mod tests {
             .unwrap_err();
     }
 
+    fn nested_body(levels: usize) -> NestedPart {
+        let mut part = NestedPart::default();
+        for _ in 1..levels {
+            part = NestedPart::MultiPart {
+                disposition: Disposition::Render,
+                language: String::new(),
+                part_semantics: PartSemantics::ProcessAll,
+                parts: vec![part],
+            };
+        }
+        part
+    }
+
+    fn multipart_body(parts: Vec<NestedPart>) -> NestedPart {
+        NestedPart::MultiPart {
+            disposition: Disposition::Render,
+            language: String::new(),
+            part_semantics: PartSemantics::ProcessAll,
+            parts,
+        }
+    }
+
+    fn encode_body(nested_part: NestedPart) -> Vec<u8> {
+        MimiContent {
+            nested_part,
+            ..Default::default()
+        }
+        .serialize()
+        .unwrap()
+    }
+
+    fn assert_decodes(bytes: &[u8]) {
+        minicbor::decode::<MimiContent>(bytes).unwrap();
+        #[cfg(feature = "serde")]
+        minicbor_serde::from_slice::<MimiContent>(bytes).unwrap();
+    }
+
+    fn assert_rejects(bytes: &[u8]) {
+        minicbor::decode::<MimiContent>(bytes).unwrap_err();
+        #[cfg(feature = "serde")]
+        minicbor_serde::from_slice::<MimiContent>(bytes).unwrap_err();
+    }
+
+    #[test]
+    fn nested_part_depth_counts_the_body_as_level_one() {
+        assert_decodes(&encode_body(nested_body(4)));
+        assert_rejects(&encode_body(nested_body(5)));
+    }
+
+    #[test]
+    fn nested_part_count_includes_every_multipart() {
+        let null_parts = |n| vec![NestedPart::default(); n];
+
+        assert_decodes(&encode_body(multipart_body(null_parts(1023))));
+        assert_rejects(&encode_body(multipart_body(null_parts(1024))));
+
+        let inner = multipart_body(null_parts(1022));
+        assert_decodes(&encode_body(multipart_body(vec![inner])));
+        let inner = multipart_body(null_parts(1023));
+        assert_rejects(&encode_body(multipart_body(vec![inner])));
+    }
+
     /// A container with an empty salt and the given extensions and body.
     fn raw_container(extensions: &[u8], body: &[u8]) -> Vec<u8> {
         let mut bytes = vec![0x87, 0x40, 0xf6, 0x40, 0xf6, 0xf6];
@@ -2124,6 +2253,89 @@ mod tests {
 
     // NullPart [Unspecified, "", 0]
     const RAW_NULL_PART: [u8; 4] = [0x83, 0x00, 0x60, 0x00];
+
+    /// An encoded MultiPart [Render, "", 3, ProcessAll, parts] with the given parts array header.
+    fn raw_multipart(parts_header: &[u8], parts: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0x85, 0x01, 0x60, 0x03, 0x02];
+        bytes.extend(parts_header);
+        bytes.extend(parts);
+        bytes
+    }
+
+    /// An encoded MultiPart whose parts are `parts`, in an indefinite-length array.
+    fn raw_indefinite_multipart(parts: &[Vec<u8>]) -> Vec<u8> {
+        let mut bytes = raw_multipart(&[0x9f], &parts.concat());
+        bytes.push(0xff);
+        bytes
+    }
+
+    #[test]
+    fn deeply_nested_parts_are_rejected_without_exhausting_the_stack() {
+        let mut body = Vec::new();
+        for _ in 0..100_000 {
+            body.extend(raw_multipart(&[0x81], &[]));
+        }
+        body.extend(RAW_NULL_PART);
+
+        assert_rejects(&raw_container(&[0xa0], &body));
+    }
+
+    #[test]
+    fn nested_part_count_spans_sibling_multiparts() {
+        let siblings = |first, second| {
+            multipart_body(vec![
+                multipart_body(vec![NestedPart::default(); first]),
+                multipart_body(vec![NestedPart::default(); second]),
+            ])
+        };
+
+        assert_decodes(&encode_body(siblings(512, 509)));
+        assert_rejects(&encode_body(siblings(512, 510)));
+    }
+
+    #[test]
+    fn indefinite_length_parts_decode() {
+        let body = raw_indefinite_multipart(&[RAW_NULL_PART.to_vec(), RAW_NULL_PART.to_vec()]);
+
+        let content: MimiContent = minicbor::decode(&raw_container(&[0xa0], &body)).unwrap();
+        assert_eq!(
+            content.nested_part,
+            multipart_body(vec![NestedPart::default(); 2])
+        );
+    }
+
+    #[test]
+    fn indefinite_length_parts_obey_the_limits() {
+        let nested = |levels| {
+            let mut part = RAW_NULL_PART.to_vec();
+            for _ in 1..levels {
+                part = raw_indefinite_multipart(&[part]);
+            }
+            raw_container(&[0xa0], &part)
+        };
+        assert_decodes(&nested(4));
+        assert_rejects(&nested(5));
+
+        let wide = |children| {
+            raw_container(
+                &[0xa0],
+                &raw_indefinite_multipart(&vec![RAW_NULL_PART.to_vec(); children]),
+            )
+        };
+        assert_decodes(&wide(1023));
+        assert_rejects(&wide(1024));
+    }
+
+    #[test]
+    fn huge_declared_parts_length_is_rejected() {
+        let u64_max = [0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+
+        assert_rejects(&raw_container(&[0xa0], &raw_multipart(&u64_max, &[])));
+        assert_rejects(&raw_container(
+            &[0xa0],
+            &raw_multipart(&u64_max, &RAW_NULL_PART),
+        ));
+    }
 
     #[test]
     fn deserialize_rejects_indefinite_lengths() {
