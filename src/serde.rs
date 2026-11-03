@@ -706,6 +706,35 @@ impl<'de> Deserialize<'de> for ExtensionName {
     }
 }
 
+/// The extensions map of MIMI content, which fails to deserialize on a repeated extension name.
+struct Extensions(BTreeMap<ExtensionName, Value>);
+
+impl<'de> Deserialize<'de> for Extensions {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ExtensionsVisitor;
+
+        impl<'de> Visitor<'de> for ExtensionsVisitor {
+            type Value = Extensions;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a map of MIMI content extensions")
+            }
+
+            fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Extensions, A::Error> {
+                let mut extensions = BTreeMap::new();
+                while let Some((name, value)) = map.next_entry()? {
+                    if extensions.insert(name, value).is_some() {
+                        return Err(de::Error::custom("duplicate extension name"));
+                    }
+                }
+                Ok(Extensions(extensions))
+            }
+        }
+
+        deserializer.deserialize_map(ExtensionsVisitor)
+    }
+}
+
 impl Serialize for MimiContent {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut seq = serializer.serialize_seq(Some(7))?;
@@ -747,7 +776,7 @@ impl<'de> Deserialize<'de> for MimiContent {
                 let in_reply_to: Option<serde_bytes::ByteBuf> = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(4, &self))?;
-                let extensions: BTreeMap<ExtensionName, Value> = seq
+                let Extensions(extensions) = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(5, &self))?;
                 let nested_part: NestedPart = seq
