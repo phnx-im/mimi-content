@@ -15,10 +15,10 @@ use ::serde::{
 };
 
 use crate::{
-    cbor::{Value, MAX_NESTING},
+    cbor::{Value, MAX_NESTING, MAX_PREALLOCATED_VALUES},
     content_container::{
         Disposition, EncryptionAlgorithm, Expiration, ExtensionName, HashAlgorithm, MimiContent,
-        NestedPart, PartSemantics,
+        NestedPart, PartCounter, PartSemantics,
     },
 };
 
@@ -625,10 +625,7 @@ impl<'de> DeserializeSeed<'de> for ValueSeed {
                 .deserialize(deserializer)
             }
             fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
-                let cap = seq
-                    .size_hint()
-                    .unwrap_or(0)
-                    .min(4096 / std::mem::size_of::<Value>());
+                let cap = seq.size_hint().unwrap_or(0).min(MAX_PREALLOCATED_VALUES);
                 let mut arr = Vec::with_capacity(cap);
                 while let Some(v) = seq.next_element_seed(ValueSeed {
                     depth: self.depth + 1,
@@ -917,120 +914,181 @@ impl Serialize for NestedPart {
 
 impl<'de> Deserialize<'de> for NestedPart {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct NestedPartVisitor;
-
-        impl<'de> Visitor<'de> for NestedPartVisitor {
-            type Value = NestedPart;
-
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("a MIMI NestedPart array")
-            }
-
-            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<NestedPart, A::Error> {
-                let disposition: Disposition = seq
-                    .next_element()?
-                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
-                let language: String = seq
-                    .next_element()?
-                    .ok_or_else(|| de::Error::invalid_length(1, &self))?;
-                let discriminant: u8 = seq
-                    .next_element()?
-                    .ok_or_else(|| de::Error::invalid_length(2, &self))?;
-                match discriminant {
-                    0 => Ok(NestedPart::NullPart {
-                        disposition,
-                        language,
-                    }),
-                    1 => {
-                        let content_type: String = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(3, &self))?;
-                        let content: serde_bytes::ByteBuf = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(4, &self))?;
-                        Ok(NestedPart::SinglePart {
-                            disposition,
-                            language,
-                            content_type,
-                            content: content.into_vec(),
-                        })
-                    }
-                    2 => {
-                        let content_type: String = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(3, &self))?;
-                        let url: String = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(4, &self))?;
-                        let expires: u32 = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(5, &self))?;
-                        let size: u64 = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(6, &self))?;
-                        let enc_alg: EncryptionAlgorithm = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(7, &self))?;
-                        let key: serde_bytes::ByteBuf = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(8, &self))?;
-                        let nonce: serde_bytes::ByteBuf = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(9, &self))?;
-                        let aad: serde_bytes::ByteBuf = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(10, &self))?;
-                        let hash_alg: HashAlgorithm = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(11, &self))?;
-                        let content_hash: serde_bytes::ByteBuf = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(12, &self))?;
-                        let description: String = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(13, &self))?;
-                        let filename: String = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(14, &self))?;
-                        Ok(NestedPart::ExternalPart {
-                            disposition,
-                            language,
-                            content_type,
-                            url,
-                            expires,
-                            size,
-                            enc_alg,
-                            key: key.into_vec(),
-                            nonce: nonce.into_vec(),
-                            aad: aad.into_vec(),
-                            hash_alg,
-                            content_hash: content_hash.into_vec(),
-                            description,
-                            filename,
-                        })
-                    }
-                    3 => {
-                        let part_semantics: PartSemantics = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(3, &self))?;
-                        let parts: Vec<NestedPart> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::invalid_length(4, &self))?;
-                        Ok(NestedPart::MultiPart {
-                            disposition,
-                            language,
-                            part_semantics,
-                            parts,
-                        })
-                    }
-                    _ => Err(de::Error::custom(format!(
-                        "invalid discriminant {discriminant} for NestedPart"
-                    ))),
-                }
-            }
+        NestedPartSeed {
+            level: 1,
+            counter: &mut PartCounter::default(),
         }
+        .deserialize(deserializer)
+    }
+}
 
-        deserializer.deserialize_seq(NestedPartVisitor)
+/// Deserializes a `NestedPart` at `level`, where the body is at level 1.
+struct NestedPartSeed<'a> {
+    level: usize,
+    counter: &'a mut PartCounter,
+}
+
+impl<'de> DeserializeSeed<'de> for NestedPartSeed<'_> {
+    type Value = NestedPart;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<NestedPart, D::Error> {
+        self.counter.enter(self.level).map_err(de::Error::custom)?;
+        deserializer.deserialize_seq(NestedPartVisitor {
+            level: self.level,
+            counter: self.counter,
+        })
+    }
+}
+
+struct NestedPartVisitor<'a> {
+    level: usize,
+    counter: &'a mut PartCounter,
+}
+
+impl<'de> Visitor<'de> for NestedPartVisitor<'_> {
+    type Value = NestedPart;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a MIMI NestedPart array")
+    }
+
+    fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<NestedPart, A::Error> {
+        let disposition: Disposition = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+        let language: String = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+        let discriminant: u8 = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(2, &self))?;
+        match discriminant {
+            0 => Ok(NestedPart::NullPart {
+                disposition,
+                language,
+            }),
+            1 => {
+                let content_type: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(3, &self))?;
+                let content: serde_bytes::ByteBuf = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(4, &self))?;
+                Ok(NestedPart::SinglePart {
+                    disposition,
+                    language,
+                    content_type,
+                    content: content.into_vec(),
+                })
+            }
+            2 => {
+                let content_type: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(3, &self))?;
+                let url: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(4, &self))?;
+                let expires: u32 = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(5, &self))?;
+                let size: u64 = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(6, &self))?;
+                let enc_alg: EncryptionAlgorithm = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(7, &self))?;
+                let key: serde_bytes::ByteBuf = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(8, &self))?;
+                let nonce: serde_bytes::ByteBuf = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(9, &self))?;
+                let aad: serde_bytes::ByteBuf = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(10, &self))?;
+                let hash_alg: HashAlgorithm = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(11, &self))?;
+                let content_hash: serde_bytes::ByteBuf = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(12, &self))?;
+                let description: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(13, &self))?;
+                let filename: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(14, &self))?;
+                Ok(NestedPart::ExternalPart {
+                    disposition,
+                    language,
+                    content_type,
+                    url,
+                    expires,
+                    size,
+                    enc_alg,
+                    key: key.into_vec(),
+                    nonce: nonce.into_vec(),
+                    aad: aad.into_vec(),
+                    hash_alg,
+                    content_hash: content_hash.into_vec(),
+                    description,
+                    filename,
+                })
+            }
+            3 => {
+                let part_semantics: PartSemantics = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(3, &self))?;
+                let parts = seq
+                    .next_element_seed(PartsSeed {
+                        level: self.level + 1,
+                        counter: &mut *self.counter,
+                    })?
+                    .ok_or_else(|| de::Error::invalid_length(4, &self))?;
+                Ok(NestedPart::MultiPart {
+                    disposition,
+                    language,
+                    part_semantics,
+                    parts,
+                })
+            }
+            _ => Err(de::Error::custom(format!(
+                "invalid discriminant {discriminant} for NestedPart"
+            ))),
+        }
+    }
+}
+
+/// Deserializes the parts array of a `MultiPart` whose parts are at `level`.
+struct PartsSeed<'a> {
+    level: usize,
+    counter: &'a mut PartCounter,
+}
+
+impl<'de> DeserializeSeed<'de> for PartsSeed<'_> {
+    type Value = Vec<NestedPart>;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_seq(self)
+    }
+}
+
+impl<'de> Visitor<'de> for PartsSeed<'_> {
+    type Value = Vec<NestedPart>;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("an array of MIMI NestedParts")
+    }
+
+    fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let mut parts = Vec::new();
+        while let Some(part) = seq.next_element_seed(NestedPartSeed {
+            level: self.level,
+            counter: &mut *self.counter,
+        })? {
+            parts.push(part);
+        }
+        Ok(parts)
     }
 }
 
