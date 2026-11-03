@@ -584,10 +584,20 @@ impl Serialize for MimiContent {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut seq = serializer.serialize_seq(Some(7))?;
         seq.serialize_element(serde_bytes::Bytes::new(&self.salt))?;
-        seq.serialize_element(&self.replaces.as_deref().map(serde_bytes::Bytes::new))?;
+        seq.serialize_element(
+            &self
+                .replaces
+                .as_ref()
+                .map(|id| serde_bytes::Bytes::new(id.as_slice())),
+        )?;
         seq.serialize_element(serde_bytes::Bytes::new(&self.topic_id))?;
         seq.serialize_element(&self.expires)?;
-        seq.serialize_element(&self.in_reply_to.as_deref().map(serde_bytes::Bytes::new))?;
+        seq.serialize_element(
+            &self
+                .in_reply_to
+                .as_ref()
+                .map(|id| serde_bytes::Bytes::new(id.as_slice())),
+        )?;
         seq.serialize_element(&self.extensions)?;
         seq.serialize_element(&self.nested_part)?;
         seq.end()
