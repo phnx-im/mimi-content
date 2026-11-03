@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use minicbor::data::Type;
+use minicbor::data::{Token, Type};
 #[cfg(feature = "serde")]
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
@@ -67,7 +67,7 @@ pub struct MimiContent {
     pub expires: Option<Expiration>, // TODO: RFC does not allow null
     #[cbor(n(4), with = "minicbor::bytes")]
     pub in_reply_to: Option<Vec<u8>>, // TODO: Enforce this is a message id
-    #[cbor(n(5))]
+    #[cbor(n(5), decode_with = "decode_extensions")]
     pub extensions: BTreeMap<ExtensionName, cbor::Value>, // TODO: Enforce max sizes
     #[cbor(n(6))]
     pub nested_part: NestedPart,
@@ -252,9 +252,46 @@ impl MimiContent {
         Ok(buf)
     }
 
+    /// Decodes MIMI content from the start of `input`.
+    ///
+    /// Fails if the content uses indefinite-length encoding or contains duplicate map keys, which
+    /// draft-ietf-mimi-content-10, section 6.1 requires receivers to reject.
     pub fn deserialize(input: &[u8]) -> Result<Self> {
-        minicbor::decode(input).map_err(Error::Decode)
+        let mut decoder = minicbor::Decoder::new(input);
+        let content = decoder.decode().map_err(Error::Decode)?;
+        reject_indefinite_lengths(&input[..decoder.position()]).map_err(Error::Decode)?;
+        Ok(content)
     }
+}
+
+/// Fails if `input` contains an indefinite-length string, byte string, array or map.
+fn reject_indefinite_lengths(input: &[u8]) -> Result<(), minicbor::decode::Error> {
+    for token in minicbor::decode::Tokenizer::new(input) {
+        if matches!(
+            token?,
+            Token::BeginBytes | Token::BeginString | Token::BeginArray | Token::BeginMap
+        ) {
+            return Err(minicbor::decode::Error::message(
+                "indefinite-length encoding",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Decodes the extensions map, failing on a repeated extension name.
+fn decode_extensions<Ctx>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut Ctx,
+) -> Result<BTreeMap<ExtensionName, cbor::Value>, minicbor::decode::Error> {
+    let mut extensions = BTreeMap::new();
+    for entry in d.map_iter::<ExtensionName, cbor::Value>()? {
+        let (name, value) = entry?;
+        if extensions.insert(name, value).is_some() {
+            return Err(minicbor::decode::Error::message("duplicate extension name"));
+        }
+    }
+    Ok(extensions)
 }
 
 /// The name of an extension in the `mimiExtensions` map.
@@ -1992,5 +2029,57 @@ mod tests {
         MimiContent::default()
             .with_extension(ExtensionName::Number(256), value)
             .unwrap_err();
+    }
+
+    /// A container with an empty salt and the given extensions and body.
+    fn raw_container(extensions: &[u8], body: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0x87, 0x40, 0xf6, 0x40, 0xf6, 0xf6];
+        bytes.extend(extensions);
+        bytes.extend(body);
+        bytes
+    }
+
+    // NullPart [Unspecified, "", 0]
+    const RAW_NULL_PART: [u8; 4] = [0x83, 0x00, 0x60, 0x00];
+
+    #[test]
+    fn deserialize_rejects_indefinite_lengths() {
+        MimiContent::deserialize(&raw_container(&[0xa0], &RAW_NULL_PART)).unwrap();
+
+        let mut container = raw_container(&[0xa0], &RAW_NULL_PART);
+        container[0] = 0x9f;
+        container.push(0xff);
+
+        let mut salt = raw_container(&[0xa0], &RAW_NULL_PART);
+        salt.splice(1..2, [0x5f, 0x41, 0x00, 0xff]);
+
+        let extensions = raw_container(&[0xbf, 0x20, 0x01, 0xff], &RAW_NULL_PART);
+        let extension_value = raw_container(&[0xa1, 0x20, 0x7f, 0x61, 0x61, 0xff], &RAW_NULL_PART);
+
+        // MultiPart [Render, "", 3, ProcessAll, [NullPart]] with indefinite-length parts
+        let mut multipart = vec![0x85, 0x01, 0x60, 0x03, 0x02, 0x9f];
+        multipart.extend(RAW_NULL_PART);
+        multipart.push(0xff);
+        let parts = raw_container(&[0xa0], &multipart);
+
+        for input in [container, salt, extensions, extension_value, parts] {
+            let mut decoder = minicbor::Decoder::new(&input);
+            decoder.skip().unwrap();
+            assert_eq!(decoder.position(), input.len());
+            MimiContent::deserialize(&input).unwrap_err();
+        }
+    }
+
+    #[test]
+    fn deserialize_rejects_duplicate_extension_names() {
+        let duplicate = raw_container(&[0xa2, 0x20, 0x01, 0x20, 0x02], &RAW_NULL_PART);
+        let non_shortest_duplicate =
+            raw_container(&[0xa2, 0x01, 0x01, 0x18, 0x01, 0x02], &RAW_NULL_PART);
+
+        for input in [duplicate, non_shortest_duplicate] {
+            MimiContent::deserialize(&input).unwrap_err();
+            #[cfg(feature = "serde")]
+            minicbor_serde::from_slice::<MimiContent>(&input).unwrap_err();
+        }
     }
 }
